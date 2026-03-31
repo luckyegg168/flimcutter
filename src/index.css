@@ -1,0 +1,221 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+/* Ant Design dark theme variables */
+:root {
+  --bg-primary: #141414;
+  --bg-secondary: #1f1f1f;
+  --bg-card: #262626;
+  --bg-hover: #2a2a2a;
+  --border-color: #303030;
+  --text-primary: #ffffff;
+  --text-secondary: rgba(255,255,255,0.65);
+  --accent: #1677ff;
+  --accent-hover: #4096ff;
+  --success: #52c41a;
+  --warning: #faad14;
+  --error: #ff4d4f;
+  --timeline-bg: #1a1a1a;
+}
+
+* {
+  box-sizing: border-box;
+  -webkit-tap-highlight-color: transparent;
+}
+
+html, body, #root {
+  width: 100%;
+  height: 100%;
+  margin: 0;
+  padding: 0;
+  overflow: hidden;
+  background: var(--bg-primary);
+  color: var(--text-primary);
+  font-family: -apple-system, 'Microsoft YaHei', BlinkMacSystemFont, 'Segoe UI', sans-serif;
+  font-size: 13px;
+}
+
+/* Custom scrollbar */
+::-webkit-scrollbar {
+  width: 6px;
+  height: 6px;
+}
+::-webkit-scrollbar-track {
+  background: var(--bg-secondary);
+}
+::-webkit-scrollbar-thumb {
+  background: #444;
+  border-radius: 3px;
+}
+::-webkit-scrollbar-thumb:hover {
+  background: #555;
+}
+
+/* Tauri drag region */
+[data-tauri-drag-region] {
+  -webkit-app-region: drag;
+  user-select: none;
+}
+[data-tauri-drag-region] * {
+  -webkit-app-region: no-drag;
+}
+
+/* Video.js dark theme overrides */
+.video-js .vjs-control-bar {
+  background-color: rgba(20, 20, 20, 0.85);
+}
+.video-js {
+  font-size: 11px;
+}
+
+/* Timeline styles */
+.timeline-wrapper {
+  position: relative;
+  height: 80px;
+  background: var(--timeline-bg);
+  border-radius: 6px;
+  overflow: hidden;
+  cursor: pointer;
+  user-select: none;
+}
+
+.timeline-ruler {
+  position: absolute;
+  top: 0;
+  left: 0;
+  right: 0;
+  height: 20px;
+  background: rgba(255,255,255,0.03);
+}
+
+.timeline-track {
+  position: absolute;
+  top: 20px;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  background: rgba(22, 119, 255, 0.1);
+  border-top: 1px solid rgba(22, 119, 255, 0.3);
+}
+
+.timeline-selection {
+  position: absolute;
+  top: 20px;
+  bottom: 0;
+  background: rgba(22, 119, 255, 0.25);
+  border: 1px solid rgba(22, 119, 255, 0.6);
+}
+
+.timeline-handle {
+  position: absolute;
+  top: 20px;
+  bottom: 0;
+  width: 6px;
+  background: #1677ff;
+  cursor: ew-resize;
+  border-radius: 2px;
+}
+
+.timeline-handle::after {
+  content: '◀▶';
+  position: absolute;
+  top: 50%;
+  left: 50%;
+  transform: translate(-50%, -50%);
+  font-size: 8px;
+  color: white;
+}
+
+.timeline-playhead {
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  width: 2px;
+  background: #ff4d4f;
+  pointer-events: none;
+}
+
+.timeline-playhead::before {
+  content: '▼';
+  position: absolute;
+  top: -2px;
+  left: -5px;
+  color: #ff4d4f;
+  font-size: 10px;
+}
+
+/* Sidebar navigation */
+.sidebar-nav-item {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 4px;
+  padding: 12px 8px;
+  cursor: pointer;
+  border-radius: 8px;
+  color: var(--text-secondary);
+  transition: all 0.2s;
+  font-size: 11px;
+}
+.sidebar-nav-item:hover {
+  background: rgba(255,255,255,0.06);
+  color: var(--text-primary);
+}
+.sidebar-nav-item.active {
+  background: rgba(22, 119, 255, 0.15);
+  color: var(--accent);
+}
+.sidebar-nav-item .anticon {
+  font-size: 18px;
+}
+
+/* Form compact */
+.ant-form-item {
+  margin-bottom: 12px;
+}
+
+/* Card styles */
+.tool-card {
+  background: var(--bg-card);
+  border: 1px solid var(--border-color);
+  border-radius: 8px;
+  padding: 12px 14px;
+  margin-bottom: 8px;
+}
+.tool-card-header {
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--text-secondary);
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+  margin-bottom: 10px;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+/* Download task item */
+.download-task-item {
+  background: var(--bg-card);
+  border: 1px solid var(--border-color);
+  border-radius: 8px;
+  padding: 10px 12px;
+  margin-bottom: 6px;
+  transition: border-color 0.2s;
+}
+.download-task-item:hover {
+  border-color: rgba(22, 119, 255, 0.4);
+}
+
+/* Ant Design overrides for dark theme compatibility */
+.ant-input, .ant-input-affix-wrapper,
+.ant-select-selector, .ant-input-number-input {
+  background: var(--bg-secondary) !important;
+  border-color: var(--border-color) !important;
+}
+
+.ant-slider-track {
+  background-color: var(--accent) !important;
+}

@@ -1,0 +1,816 @@
+use std::collections::HashMap;
+use std::sync::{Arc, Mutex};
+use tauri::{AppHandle, Emitter};
+use tauri_plugin_shell::ShellExt;
+use tauri_plugin_shell::process::CommandEvent;
+use serde::{Deserialize, Serialize};
+
+use crate::models::video::VideoMetadata;
+use crate::models::task::FfmpegProgress;
+
+#[derive(Debug, Serialize, Deserialize)]
+pub struct TrimOptions {
+    pub start: f64,
+    pub end: f64,
+}
+
+#[derive(Debug, Serialize, Deserialize)]
+pub struct ConvertOptions {
+    pub video_codec: String,
+    pub audio_codec: String,
+    pub crf: Option<u32>,
+}
+
+#[derive(Debug, Serialize, Deserialize)]
+pub struct CompressOptions {
+    pub crf: u32,
+    pub preset: String,
+    pub resolution: Option<String>,
+}
+
+#[derive(Debug, Serialize, Deserialize)]
+pub struct GifOptions {
+    pub start: f64,
+    pub end: f64,
+    pub fps: u32,
+    pub width: u32,
+}
+
+fn parse_duration_secs(duration_str: &str) -> f64 {
+    let parts: Vec<&str> = duration_str.split(':').collect();
+    match parts.len() {
+        3 => {
+            let h: f64 = parts[0].parse().unwrap_or(0.0);
+            let m: f64 = parts[1].parse().unwrap_or(0.0);
+            let s: f64 = parts[2].parse().unwrap_or(0.0);
+            h * 3600.0 + m * 60.0 + s
+        }
+        2 => {
+            let m: f64 = parts[0].parse().unwrap_or(0.0);
+            let s: f64 = parts[1].parse().unwrap_or(0.0);
+            m * 60.0 + s
+        }
+        _ => duration_str.parse().unwrap_or(0.0),
+    }
+}
+
+fn secs_to_ts(secs: f64) -> String {
+    let h = (secs / 3600.0) as u64;
+    let m = ((secs % 3600.0) / 60.0) as u64;
+    let s = secs % 60.0;
+    format!("{:02}:{:02}:{:06.3}", h, m, s)
+}
+
+async fn run_ffprobe(
+    app: &AppHandle,
+    input: &str,
+) -> Result<HashMap<String, String>, String> {
+    let args = vec![
+        "-v", "quiet",
+        "-print_format", "json",
+        "-show_streams",
+        "-show_format",
+        input,
+    ];
+    // We use ffmpeg with ffprobe-like flags; shipping separate ffprobe is optional.
+    // If ffprobe sidecar is available use that, otherwise parse ffmpeg stderr output.
+    // For simplicity, use ffprobe via the ffmpeg sidecar path replaced with ffprobe.
+    // However, we only have ffmpeg sidecar. Let's extract info via ffmpeg -i.
+    let _ = args; // suppress warning
+    
+    let (mut rx, _child) = app
+        .shell()
+        .sidecar("ffmpeg")
+        .map_err(|e| e.to_string())?
+        .args(["-v", "quiet", "-print_format", "json", "-show_streams", "-show_format", input])
+        .spawn()
+        .map_err(|e| e.to_string())?;
+
+    let mut output = String::new();
+    while let Some(event) = rx.recv().await {
+        match event {
+            CommandEvent::Stdout(line) => {
+                output.push_str(&String::from_utf8_lossy(&line));
+            }
+            CommandEvent::Stderr(line) => {
+                output.push_str(&String::from_utf8_lossy(&line));
+            }
+            CommandEvent::Terminated(_) => break,
+            _ => {}
+        }
+    }
+    
+    // Parse JSON output from ffprobe-like call — but we're using ffmpeg sidecar which won't support -show_streams.
+    // We'll use -i and parse stderr instead.
+    let mut info = HashMap::new();
+    info.insert("raw".to_string(), output);
+    Ok(info)
+}
+
+async fn get_metadata_internal(app: &AppHandle, input: &str) -> Result<VideoMetadata, String> {
+    // Use ffmpeg -i to get video info from stderr
+    let (mut rx, _child) = app
+        .shell()
+        .sidecar("ffmpeg")
+        .map_err(|e| e.to_string())?
+        .args(["-i", input, "-f", "null", "-"])
+        .spawn()
+        .map_err(|e| e.to_string())?;
+
+    let mut stderr_output = String::new();
+    while let Some(event) = rx.recv().await {
+        match event {
+            CommandEvent::Stderr(line) => {
+                stderr_output.push_str(&String::from_utf8_lossy(&line));
+                stderr_output.push('\n');
+            }
+            CommandEvent::Terminated(_) => break,
+            _ => {}
+        }
+    }
+
+    parse_ffmpeg_info(&stderr_output, input)
+}
+
+fn parse_ffmpeg_info(stderr: &str, path: &str) -> Result<VideoMetadata, String> {
+    use std::path::Path;
+    
+    let filename = Path::new(path)
+        .file_name()
+        .map(|n| n.to_string_lossy().to_string())
+        .unwrap_or_default();
+
+    let file_size = std::fs::metadata(path).map(|m| m.len()).unwrap_or(0);
+    
+    // Duration
+    let mut duration = 0.0f64;
+    if let Some(caps) = regex::Regex::new(r"Duration: (\d{2}:\d{2}:\d{2}\.\d+)")
+        .ok()
+        .and_then(|re| re.captures(stderr))
+    {
+        duration = parse_duration_secs(&caps[1]);
+    }
+
+    // Video stream info: Video: codec, wxh, fps
+    let mut width = 0u32;
+    let mut height = 0u32;
+    let mut fps = 0.0f64;
+    let mut video_codec = String::new();
+    let mut bitrate = 0u64;
+
+    if let Some(caps) = regex::Regex::new(r"Stream #\S+ Video: (\w+)")
+        .ok()
+        .and_then(|re| re.captures(stderr))
+    {
+        video_codec = caps[1].to_string();
+    }
+
+    if let Some(caps) = regex::Regex::new(r"(\d{3,5})x(\d{3,5})")
+        .ok()
+        .and_then(|re| re.captures(stderr))
+    {
+        width = caps[1].parse().unwrap_or(0);
+        height = caps[2].parse().unwrap_or(0);
+    }
+
+    if let Some(caps) = regex::Regex::new(r"(\d+(?:\.\d+)?) fps")
+        .ok()
+        .and_then(|re| re.captures(stderr))
+    {
+        fps = caps[1].parse().unwrap_or(0.0);
+    }
+
+    if let Some(caps) = regex::Regex::new(r"bitrate: (\d+) kb/s")
+        .ok()
+        .and_then(|re| re.captures(stderr))
+    {
+        bitrate = caps[1].parse::<u64>().unwrap_or(0) * 1000;
+    }
+
+    // Audio codec
+    let mut audio_codec = String::new();
+    if let Some(caps) = regex::Regex::new(r"Stream #\S+ Audio: (\w+)")
+        .ok()
+        .and_then(|re| re.captures(stderr))
+    {
+        audio_codec = caps[1].to_string();
+    }
+
+    // Format
+    let format = std::path::Path::new(path)
+        .extension()
+        .map(|e| e.to_string_lossy().to_lowercase())
+        .unwrap_or_default();
+
+    Ok(VideoMetadata {
+        path: path.to_string(),
+        filename,
+        duration,
+        width,
+        height,
+        fps,
+        video_codec,
+        audio_codec,
+        bitrate,
+        file_size,
+        format,
+    })
+}
+
+fn emit_progress(app: &AppHandle, task_id: &str, progress: f64, current: f64, total: f64) {
+    let p = FfmpegProgress {
+        task_id: task_id.to_string(),
+        progress,
+        current_time: current,
+        total_time: total,
+        speed: None,
+        fps: None,
+        bitrate: None,
+    };
+    let _ = app.emit("ffmpeg_progress", p);
+}
+
+async fn run_ffmpeg_with_progress(
+    app: &AppHandle,
+    args: Vec<String>,
+    task_id: &str,
+    total_duration: f64,
+) -> Result<(), String> {
+    let (mut rx, _child) = app
+        .shell()
+        .sidecar("ffmpeg")
+        .map_err(|e| e.to_string())?
+        .args(&args)
+        .spawn()
+        .map_err(|e| e.to_string())?;
+
+    let mut last_error = String::new();
+
+    while let Some(event) = rx.recv().await {
+        match event {
+            CommandEvent::Stderr(line) => {
+                let line_str = String::from_utf8_lossy(&line);
+                // Parse time= from ffmpeg progress output
+                if let Some(caps) = regex::Regex::new(r"time=(\d{2}:\d{2}:\d{2}\.\d+)")
+                    .ok()
+                    .and_then(|re| re.captures(&line_str))
+                {
+                    let current = parse_duration_secs(&caps[1]);
+                    let progress = if total_duration > 0.0 {
+                        (current / total_duration * 100.0).min(100.0)
+                    } else {
+                        0.0
+                    };
+                    emit_progress(app, task_id, progress, current, total_duration);
+                }
+                last_error = line_str.to_string();
+            }
+            CommandEvent::Terminated(status) => {
+                if status.code.unwrap_or(-1) != 0 {
+                    return Err(format!("FFmpeg error: {}", last_error));
+                }
+                emit_progress(app, task_id, 100.0, total_duration, total_duration);
+                break;
+            }
+            _ => {}
+        }
+    }
+
+    Ok(())
+}
+
+#[tauri::command]
+pub async fn get_video_metadata(app: AppHandle, path: String) -> Result<VideoMetadata, String> {
+    get_metadata_internal(&app, &path).await
+}
+
+#[tauri::command]
+pub async fn get_ffmpeg_version(app: AppHandle) -> Result<String, String> {
+    let (mut rx, _child) = app
+        .shell()
+        .sidecar("ffmpeg")
+        .map_err(|e| e.to_string())?
+        .args(["-version"])
+        .spawn()
+        .map_err(|e| e.to_string())?;
+
+    let mut output = String::new();
+    while let Some(event) = rx.recv().await {
+        match event {
+            CommandEvent::Stdout(line) => {
+                let s = String::from_utf8_lossy(&line);
+                if output.is_empty() {
+                    output = s.lines().next().unwrap_or("").to_string();
+                }
+            }
+            CommandEvent::Terminated(_) => break,
+            _ => {}
+        }
+    }
+
+    if output.is_empty() {
+        Err("Could not get FFmpeg version".to_string())
+    } else {
+        Ok(output)
+    }
+}
+
+#[tauri::command]
+pub async fn trim_video(
+    app: AppHandle,
+    input: String,
+    output: String,
+    start: f64,
+    end: f64,
+    task_id: String,
+) -> Result<String, String> {
+    let duration = end - start;
+    let args = vec![
+        "-y".to_string(),
+        "-i".to_string(), input,
+        "-ss".to_string(), secs_to_ts(start),
+        "-t".to_string(), secs_to_ts(duration),
+        "-c".to_string(), "copy".to_string(),
+        "-progress".to_string(), "pipe:2".to_string(),
+        output.clone(),
+    ];
+    run_ffmpeg_with_progress(&app, args, &task_id, duration).await?;
+    Ok(output)
+}
+
+#[tauri::command]
+pub async fn split_video(
+    app: AppHandle,
+    input: String,
+    split_points: Vec<f64>,
+    output_dir: String,
+    task_id: String,
+) -> Result<Vec<String>, String> {
+    use std::path::Path;
+    
+    let meta = get_metadata_internal(&app, &input).await?;
+    let stem = Path::new(&input)
+        .file_stem()
+        .map(|s| s.to_string_lossy().to_string())
+        .unwrap_or("output".to_string());
+    let ext = Path::new(&input)
+        .extension()
+        .map(|e| e.to_string_lossy().to_string())
+        .unwrap_or("mp4".to_string());
+
+    let mut points = split_points.clone();
+    points.sort_by(|a, b| a.partial_cmp(b).unwrap());
+    
+    let mut segments: Vec<(f64, f64)> = Vec::new();
+    let mut prev = 0.0f64;
+    for &p in &points {
+        if p > prev && p < meta.duration {
+            segments.push((prev, p));
+            prev = p;
+        }
+    }
+    segments.push((prev, meta.duration));
+
+    let mut outputs = Vec::new();
+    for (i, (start, end)) in segments.iter().enumerate() {
+        let out_path = format!("{}\\{}_{:03}.{}", output_dir, stem, i + 1, ext);
+        let duration = end - start;
+        let args = vec![
+            "-y".to_string(),
+            "-i".to_string(), input.clone(),
+            "-ss".to_string(), secs_to_ts(*start),
+            "-t".to_string(), secs_to_ts(duration),
+            "-c".to_string(), "copy".to_string(),
+            out_path.clone(),
+        ];
+        run_ffmpeg_with_progress(&app, args, &task_id, duration).await?;
+        outputs.push(out_path);
+    }
+
+    Ok(outputs)
+}
+
+#[tauri::command]
+pub async fn merge_videos(
+    app: AppHandle,
+    inputs: Vec<String>,
+    output: String,
+    task_id: String,
+) -> Result<String, String> {
+    use std::io::Write;
+    
+    // Create concat list file
+    let tmp = tempfile::NamedTempFile::new().map_err(|e| e.to_string())?;
+    {
+        let mut f = tmp.as_file();
+        for p in &inputs {
+            let escaped = p.replace('\\', "/").replace('\'', "'\\''");
+            writeln!(f, "file '{}'", escaped).map_err(|e| e.to_string())?;
+        }
+    }
+    
+    let total_duration: f64 = {
+        let mut total = 0.0;
+        for inp in &inputs {
+            if let Ok(meta) = get_metadata_internal(&app, inp).await {
+                total += meta.duration;
+            }
+        }
+        total
+    };
+
+    let list_path = tmp.path().to_string_lossy().to_string();
+    let args = vec![
+        "-y".to_string(),
+        "-f".to_string(), "concat".to_string(),
+        "-safe".to_string(), "0".to_string(),
+        "-i".to_string(), list_path,
+        "-c".to_string(), "copy".to_string(),
+        output.clone(),
+    ];
+    run_ffmpeg_with_progress(&app, args, &task_id, total_duration).await?;
+    Ok(output)
+}
+
+#[tauri::command]
+pub async fn extract_audio(
+    app: AppHandle,
+    input: String,
+    output: String,
+    format: String,
+    task_id: String,
+) -> Result<String, String> {
+    let meta = get_metadata_internal(&app, &input).await?;
+    let mut args = vec![
+        "-y".to_string(),
+        "-i".to_string(), input,
+        "-vn".to_string(),
+    ];
+
+    match format.as_str() {
+        "mp3" => {
+            args.extend_from_slice(&["-codec:a".to_string(), "libmp3lame".to_string(), "-q:a".to_string(), "2".to_string()]);
+        }
+        "aac" | "m4a" => {
+            args.extend_from_slice(&["-codec:a".to_string(), "aac".to_string(), "-b:a".to_string(), "192k".to_string()]);
+        }
+        "flac" => {
+            args.extend_from_slice(&["-codec:a".to_string(), "flac".to_string()]);
+        }
+        "wav" => {
+            args.extend_from_slice(&["-codec:a".to_string(), "pcm_s16le".to_string()]);
+        }
+        "ogg" => {
+            args.extend_from_slice(&["-codec:a".to_string(), "libvorbis".to_string(), "-q:a".to_string(), "5".to_string()]);
+        }
+        _ => {
+            args.extend_from_slice(&["-codec:a".to_string(), "copy".to_string()]);
+        }
+    }
+
+    args.push(output.clone());
+    run_ffmpeg_with_progress(&app, args, &task_id, meta.duration).await?;
+    Ok(output)
+}
+
+#[tauri::command]
+pub async fn convert_video(
+    app: AppHandle,
+    input: String,
+    output: String,
+    video_codec: String,
+    audio_codec: String,
+    crf: Option<u32>,
+    task_id: String,
+) -> Result<String, String> {
+    let meta = get_metadata_internal(&app, &input).await?;
+    let mut args = vec![
+        "-y".to_string(),
+        "-i".to_string(), input,
+    ];
+
+    if video_codec == "copy" {
+        args.extend_from_slice(&["-c:v".to_string(), "copy".to_string()]);
+    } else {
+        args.extend_from_slice(&["-c:v".to_string(), video_codec.clone()]);
+        if let Some(c) = crf {
+            args.extend_from_slice(&["-crf".to_string(), c.to_string()]);
+        }
+        if video_codec.contains("h264") || video_codec == "libx264" {
+            args.extend_from_slice(&["-preset".to_string(), "medium".to_string()]);
+        }
+    }
+
+    if audio_codec == "copy" {
+        args.extend_from_slice(&["-c:a".to_string(), "copy".to_string()]);
+    } else {
+        args.extend_from_slice(&["-c:a".to_string(), audio_codec]);
+    }
+
+    args.push(output.clone());
+    run_ffmpeg_with_progress(&app, args, &task_id, meta.duration).await?;
+    Ok(output)
+}
+
+#[tauri::command]
+pub async fn compress_video(
+    app: AppHandle,
+    input: String,
+    output: String,
+    crf: u32,
+    preset: String,
+    resolution: Option<String>,
+    task_id: String,
+) -> Result<String, String> {
+    let meta = get_metadata_internal(&app, &input).await?;
+    let mut args = vec![
+        "-y".to_string(),
+        "-i".to_string(), input,
+        "-c:v".to_string(), "libx264".to_string(),
+        "-crf".to_string(), crf.to_string(),
+        "-preset".to_string(), preset,
+        "-c:a".to_string(), "aac".to_string(),
+        "-b:a".to_string(), "128k".to_string(),
+    ];
+
+    if let Some(res) = resolution {
+        if res != "original" {
+            let scale = match res.as_str() {
+                "1080p" => "scale=-2:1080",
+                "720p" => "scale=-2:720",
+                "480p" => "scale=-2:480",
+                "360p" => "scale=-2:360",
+                _ => "",
+            };
+            if !scale.is_empty() {
+                args.extend_from_slice(&["-vf".to_string(), scale.to_string()]);
+            }
+        }
+    }
+
+    args.push(output.clone());
+    run_ffmpeg_with_progress(&app, args, &task_id, meta.duration).await?;
+    Ok(output)
+}
+
+#[tauri::command]
+pub async fn take_screenshot(
+    app: AppHandle,
+    input: String,
+    output: String,
+    timestamp: f64,
+) -> Result<String, String> {
+    let args = vec![
+        "-y".to_string(),
+        "-ss".to_string(), secs_to_ts(timestamp),
+        "-i".to_string(), input,
+        "-frames:v".to_string(), "1".to_string(),
+        "-q:v".to_string(), "2".to_string(),
+        output.clone(),
+    ];
+
+    let (mut rx, _child) = app
+        .shell()
+        .sidecar("ffmpeg")
+        .map_err(|e| e.to_string())?
+        .args(&args)
+        .spawn()
+        .map_err(|e| e.to_string())?;
+
+    let mut last_err = String::new();
+    while let Some(event) = rx.recv().await {
+        match event {
+            CommandEvent::Stderr(line) => {
+                last_err = String::from_utf8_lossy(&line).to_string();
+            }
+            CommandEvent::Terminated(status) => {
+                if status.code.unwrap_or(-1) != 0 {
+                    return Err(format!("Screenshot failed: {}", last_err));
+                }
+                break;
+            }
+            _ => {}
+        }
+    }
+
+    Ok(output)
+}
+
+#[tauri::command]
+pub async fn make_gif(
+    app: AppHandle,
+    input: String,
+    output: String,
+    start: f64,
+    end: f64,
+    fps: u32,
+    width: u32,
+    task_id: String,
+) -> Result<String, String> {
+    let duration = end - start;
+    // Two-pass GIF: palette gen then encode
+    let palette_file = format!("{}.palette.png", output);
+    
+    // Pass 1: generate palette
+    let palettegen_args = vec![
+        "-y".to_string(),
+        "-ss".to_string(), secs_to_ts(start),
+        "-t".to_string(), secs_to_ts(duration),
+        "-i".to_string(), input.clone(),
+        "-vf".to_string(), format!("fps={},scale={}:-1:flags=lanczos,palettegen", fps, width),
+        palette_file.clone(),
+    ];
+
+    let (mut rx, _child) = app
+        .shell()
+        .sidecar("ffmpeg")
+        .map_err(|e| e.to_string())?
+        .args(&palettegen_args)
+        .spawn()
+        .map_err(|e| e.to_string())?;
+
+    while let Some(event) = rx.recv().await {
+        if let CommandEvent::Terminated(_) = event { break; }
+    }
+
+    // Pass 2: encode with palette
+    let encode_args = vec![
+        "-y".to_string(),
+        "-ss".to_string(), secs_to_ts(start),
+        "-t".to_string(), secs_to_ts(duration),
+        "-i".to_string(), input,
+        "-i".to_string(), palette_file.clone(),
+        "-lavfi".to_string(), format!("fps={},scale={}:-1:flags=lanczos[x];[x][1:v]paletteuse", fps, width),
+        output.clone(),
+    ];
+    run_ffmpeg_with_progress(&app, encode_args, &task_id, duration).await?;
+
+    // Clean up palette file
+    let _ = std::fs::remove_file(&palette_file);
+
+    Ok(output)
+}
+
+#[tauri::command]
+pub async fn adjust_speed(
+    app: AppHandle,
+    input: String,
+    output: String,
+    speed: f64,
+    task_id: String,
+) -> Result<String, String> {
+    let meta = get_metadata_internal(&app, &input).await?;
+    let new_duration = meta.duration / speed;
+
+    // atempo supports 0.5 to 2.0; for other values chain multiple atempo filters
+    let audio_filter = build_atempo_chain(speed);
+    let args = vec![
+        "-y".to_string(),
+        "-i".to_string(), input,
+        "-filter_complex".to_string(),
+        format!("[0:v]setpts={:.4}*PTS[v];[0:a]{}[a]", 1.0 / speed, audio_filter),
+        "-map".to_string(), "[v]".to_string(),
+        "-map".to_string(), "[a]".to_string(),
+        "-c:v".to_string(), "libx264".to_string(),
+        "-c:a".to_string(), "aac".to_string(),
+        output.clone(),
+    ];
+    run_ffmpeg_with_progress(&app, args, &task_id, new_duration).await?;
+    Ok(output)
+}
+
+fn build_atempo_chain(speed: f64) -> String {
+    // atempo filter must be in range [0.5, 100]; for large changes chain
+    // We clamp to [0.25, 4.0] as per UI options
+    if speed >= 0.5 && speed <= 2.0 {
+        format!("atempo={:.4}", speed)
+    } else if speed < 0.5 {
+        // Two 0.5 filters = 0.25x
+        format!("atempo=0.5,atempo={:.4}", speed / 0.5)
+    } else {
+        // speed > 2.0: chain
+        let mut chain = String::new();
+        let mut remaining = speed;
+        let mut first = true;
+        while remaining > 2.0 {
+            if !first { chain.push(','); }
+            chain.push_str("atempo=2.0");
+            remaining /= 2.0;
+            first = false;
+        }
+        if remaining > 1.0 {
+            if !first { chain.push(','); }
+            chain.push_str(&format!("atempo={:.4}", remaining));
+        }
+        chain
+    }
+}
+
+#[tauri::command]
+pub async fn rotate_video(
+    app: AppHandle,
+    input: String,
+    output: String,
+    rotation: u32,
+    flip: Option<String>,
+    task_id: String,
+) -> Result<String, String> {
+    let meta = get_metadata_internal(&app, &input).await?;
+    
+    let mut vf_parts: Vec<String> = Vec::new();
+    
+    match rotation {
+        90 => vf_parts.push("transpose=1".to_string()),
+        180 => vf_parts.push("transpose=2,transpose=2".to_string()),
+        270 => vf_parts.push("transpose=2".to_string()),
+        _ => {}
+    }
+
+    if let Some(f) = flip {
+        match f.as_str() {
+            "hflip" => vf_parts.push("hflip".to_string()),
+            "vflip" => vf_parts.push("vflip".to_string()),
+            _ => {}
+        }
+    }
+
+    let mut args = vec![
+        "-y".to_string(),
+        "-i".to_string(), input,
+        "-c:a".to_string(), "copy".to_string(),
+    ];
+
+    if !vf_parts.is_empty() {
+        args.extend_from_slice(&["-vf".to_string(), vf_parts.join(",")]);
+        args.extend_from_slice(&["-c:v".to_string(), "libx264".to_string()]);
+    } else {
+        args.extend_from_slice(&["-c:v".to_string(), "copy".to_string()]);
+    }
+
+    args.push(output.clone());
+    run_ffmpeg_with_progress(&app, args, &task_id, meta.duration).await?;
+    Ok(output)
+}
+
+#[tauri::command]
+pub async fn adjust_volume(
+    app: AppHandle,
+    input: String,
+    output: String,
+    volume: f64,
+    task_id: String,
+) -> Result<String, String> {
+    let meta = get_metadata_internal(&app, &input).await?;
+    let args = vec![
+        "-y".to_string(),
+        "-i".to_string(), input,
+        "-af".to_string(), format!("volume={:.2}", volume),
+        "-c:v".to_string(), "copy".to_string(),
+        output.clone(),
+    ];
+    run_ffmpeg_with_progress(&app, args, &task_id, meta.duration).await?;
+    Ok(output)
+}
+
+#[tauri::command]
+pub async fn detect_scenes(
+    app: AppHandle,
+    input: String,
+    threshold: f64,
+) -> Result<Vec<f64>, String> {
+    let args = vec![
+        "-i".to_string(), input,
+        "-filter:v".to_string(), format!("select='gt(scene,{})',showinfo", threshold),
+        "-vsync".to_string(), "vfr".to_string(),
+        "-f".to_string(), "null".to_string(),
+        "-".to_string(),
+    ];
+
+    let (mut rx, _child) = app
+        .shell()
+        .sidecar("ffmpeg")
+        .map_err(|e| e.to_string())?
+        .args(&args)
+        .spawn()
+        .map_err(|e| e.to_string())?;
+
+    let mut timestamps: Vec<f64> = Vec::new();
+    let re = regex::Regex::new(r"pts_time:([\d.]+)").map_err(|e| e.to_string())?;
+
+    while let Some(event) = rx.recv().await {
+        match event {
+            CommandEvent::Stderr(line) => {
+                let s = String::from_utf8_lossy(&line);
+                if let Some(caps) = re.captures(&s) {
+                    let ts: f64 = caps[1].parse().unwrap_or(0.0);
+                    timestamps.push(ts);
+                }
+            }
+            CommandEvent::Terminated(_) => break,
+            _ => {}
+        }
+    }
+
+    timestamps.dedup_by(|a, b| (*a - *b).abs() < 0.1);
+    Ok(timestamps)
+}
