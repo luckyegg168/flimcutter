@@ -15,6 +15,7 @@ import {
   ApiOutlined,
   CheckCircleOutlined,
   ToolOutlined,
+  ReloadOutlined,
 } from '@ant-design/icons';
 import { open } from '@tauri-apps/plugin-dialog';
 import { useSettingsStore } from '../../stores/settingsStore';
@@ -31,6 +32,7 @@ const SettingsPage: React.FC = () => {
     asrModel, setAsrModel,
     ffmpegPath, setFfmpegPath,
     ytdlpPath, setYtdlpPath,
+    resetSettings,
   } = useSettingsStore();
 
   const [asrTesting, setAsrTesting] = useState(false);
@@ -184,7 +186,20 @@ const SettingsPage: React.FC = () => {
 
       <Divider style={{ borderColor: '#222' }} />
 
-      <Text style={{ color: '#444', fontSize: 11 }}>FlimCutter v0.1.0 — Tauri v2 + React + Rust</Text>
+      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+        <Text style={{ color: '#444', fontSize: 11 }}>FlimCutter v0.1.0 — Tauri v2 + React + Rust</Text>
+        <Button
+          size="small"
+          icon={<ReloadOutlined />}
+          danger
+          onClick={() => {
+            resetSettings();
+            message.success('已恢復預設值');
+          }}
+        >
+          恢復預設值
+        </Button>
+      </div>
     </div>
   );
 };

@@ -241,6 +241,7 @@ export async function watermarkVideo(
     fontSize: number;
     color: string;
     opacity: number;
+    fontPath?: string;
   },
   onProgress?: ProgressCallback
 ): Promise<string> {
@@ -252,6 +253,28 @@ export async function watermarkVideo(
     fontSize: opts.fontSize,
     color: opts.color,
     opacity: opts.opacity,
+    fontPath: opts.fontPath ?? null,
+  }, onProgress);
+}
+
+export async function imageWatermark(
+  inputPath: string,
+  outputPath: string,
+  opts: {
+    image: string;
+    position: 'topleft' | 'topright' | 'bottomleft' | 'bottomright' | 'center';
+    opacity: number;
+    scale: number;
+  },
+  onProgress?: ProgressCallback
+): Promise<string> {
+  return runFfmpegOperation('image_watermark', {
+    input: inputPath,
+    output: outputPath,
+    image: opts.image,
+    position: opts.position,
+    opacity: opts.opacity,
+    scale: opts.scale,
   }, onProgress);
 }
 

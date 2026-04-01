@@ -820,15 +820,16 @@ pub async fn watermark_video(
     input: String,
     output: String,
     text: String,
-    position: String, // "topleft" | "topright" | "bottomleft" | "bottomright" | "center"
+    position: String,
     font_size: u32,
-    color: String,    // e.g. "white", "black", "#FF0000"
-    opacity: f64,     // 0.0 – 1.0
+    color: String,
+    opacity: f64,
+    font_path: Option<String>,
     task_id: String,
 ) -> Result<String, String> {
     let meta = get_metadata_internal(&app, &input).await?;
 
-    // Escape special characters for drawtext filter
+    // Escape text for drawtext (backslash, colon, single-quote)
     let escaped = text
         .replace('\\', "\\\\")
         .replace(':', "\\:")
@@ -837,26 +838,88 @@ pub async fn watermark_video(
     let x_expr = match position.as_str() {
         "topleft" | "bottomleft" => "20".to_string(),
         "topright" | "bottomright" => "(w-text_w-20)".to_string(),
-        _ => "(w-text_w)/2".to_string(), // center
+        _ => "(w-text_w)/2".to_string(),
     };
     let y_expr = match position.as_str() {
         "topleft" | "topright" => "20".to_string(),
         "bottomleft" | "bottomright" => "(h-text_h-20)".to_string(),
-        _ => "(h-text_h)/2".to_string(), // center
+        _ => "(h-text_h)/2".to_string(),
     };
 
-    // Clamp opacity to 0–1
     let alpha = opacity.clamp(0.0, 1.0);
 
+    // Resolve font file: use provided path or fall back to common Windows CJK fonts
+    let font_file = font_path
+        .filter(|p| !p.is_empty() && std::path::Path::new(p).exists())
+        .or_else(|| {
+            // Common Windows fonts that support CJK characters
+            let candidates = [
+                "C:/Windows/Fonts/msjh.ttc",     // 微軟正黑體
+                "C:/Windows/Fonts/msjhbd.ttc",
+                "C:/Windows/Fonts/mingliu.ttc",   // 細明體
+                "C:/Windows/Fonts/kaiu.ttf",      // 標楷體
+                "C:/Windows/Fonts/simsun.ttc",    // 宋體 (Simplified)
+                "C:/Windows/Fonts/msyh.ttc",      // 微軟雅黑 (Simplified)
+            ];
+            candidates.iter()
+                .find(|p| std::path::Path::new(p).exists())
+                .map(|s| s.to_string())
+        });
+
+    let fontfile_clause = match font_file {
+        Some(ref p) => format!("fontfile='{}':", p.replace('\\', "/").replace(':', "\\:")),
+        None => String::new(),
+    };
+
     let drawtext = format!(
-        "drawtext=text='{}':fontsize={}:fontcolor={}@{:.2}:x={}:y={}",
-        escaped, font_size, color, alpha, x_expr, y_expr
+        "drawtext={}text='{}':fontsize={}:fontcolor={}@{:.2}:x={}:y={}",
+        fontfile_clause, escaped, font_size, color, alpha, x_expr, y_expr
     );
 
     let args = vec![
         "-y".to_string(),
         "-i".to_string(), input,
         "-vf".to_string(), drawtext,
+        "-codec:a".to_string(), "copy".to_string(),
+        output.clone(),
+    ];
+    run_ffmpeg_with_progress(&app, args, &task_id, meta.duration).await?;
+    Ok(output)
+}
+
+#[tauri::command]
+pub async fn image_watermark(
+    app: AppHandle,
+    input: String,
+    output: String,
+    image: String,
+    position: String,
+    opacity: f64,
+    scale: u32, // percentage 10–200
+    task_id: String,
+) -> Result<String, String> {
+    let meta = get_metadata_internal(&app, &input).await?;
+    let alpha = opacity.clamp(0.0, 1.0);
+    let scale_factor = (scale as f64 / 100.0).clamp(0.1, 4.0);
+
+    let overlay_expr = match position.as_str() {
+        "topleft"     => "20:20",
+        "topright"    => "W-w-20:20",
+        "bottomleft"  => "20:H-h-20",
+        "bottomright" => "W-w-20:H-h-20",
+        _             => "(W-w)/2:(H-h)/2", // center
+    };
+
+    let filter = format!(
+        "[1:v]scale=iw*{:.2}:ih*{:.2},format=rgba,colorchannelmixer=aa={:.2}[wm];[0:v][wm]overlay={}",
+        scale_factor, scale_factor, alpha, overlay_expr
+    );
+
+    let args = vec![
+        "-y".to_string(),
+        "-i".to_string(), input,
+        "-i".to_string(), image,
+        "-filter_complex".to_string(), filter,
         "-codec:a".to_string(), "copy".to_string(),
         output.clone(),
     ];

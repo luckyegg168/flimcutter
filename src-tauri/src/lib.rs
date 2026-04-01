@@ -27,6 +27,7 @@ pub fn run() {
             ffmpeg::adjust_volume,
             ffmpeg::detect_scenes,
             ffmpeg::watermark_video,
+            ffmpeg::image_watermark,
             ffmpeg::crop_video,
             // download commands
             download::get_video_info,

@@ -315,3 +315,361 @@ FFmpeg process → stdout (-progress pipe:1)
 ## Errors Encountered
 | Error | Attempt | Resolution |
 |-------|---------|------------|
+
+---
+
+## Phase 6: 特效預覽、邊框、浮動圖片、轉場效果 `status: not_started`
+
+> **給實作 Agent 的說明**：本 Phase 新增 4 個功能，涉及 Rust 後端新增 command、前端新增面板元件。
+> 所有 Tauri invoke 參數一律使用 **camelCase**（Rust `#[serde(rename_all = "camelCase")]` 已在相關 struct 上設定）。
+> 完成後需在 `src-tauri/src/lib.rs` 的 `generate_handler![]` 中新增所有新 command。
+
+---
+
+### Feature 1: 特效即時預覽 (Effect Preview)
+
+#### 目標
+在套用 FFmpeg 特效（浮水印、邊框、濾鏡等）前，提供單格畫面的即時預覽，讓使用者確認效果再輸出。
+
+#### Rust 後端 — `src-tauri/src/commands/ffmpeg.rs`
+
+新增 command `preview_frame_effect`：
+
+```rust
+#[tauri::command]
+pub async fn preview_frame_effect(
+    input: String,
+    timestamp: f64,
+    vf_filter: String,   // FFmpeg -vf 參數字串，例如 "drawtext=..." 或 "pad=..."
+    task_id: String,
+) -> Result<String, String> {
+    // 1. 用 FFmpeg 擷取指定時間點的單格畫面，套用 vf_filter，輸出為 PNG pipe
+    // ffmpeg -ss {timestamp} -i {input} -vf {vf_filter} -vframes 1 -f image2pipe -vcodec png pipe:1
+    // 2. 讀取 stdout bytes
+    // 3. 用 base64::encode 轉為 base64 字串
+    // 4. 回傳 "data:image/png;base64,{base64_string}"
+}
+```
+
+**依賴**：`Cargo.toml` 新增 `base64 = "0.22"`
+
+#### 前端 Service — `src/services/ffmpeg.ts`
+
+```typescript
+export async function previewFrameEffect(
+  inputPath: string,
+  timestamp: number,
+  vfFilter: string,
+): Promise<string> {
+  return invoke<string>('preview_frame_effect', {
+    input: inputPath,
+    timestamp,
+    vfFilter,
+    taskId: `preview_${Date.now()}`,
+  });
+}
+```
+
+#### 前端元件 — `src/components/Editor/EffectPreview.tsx`
+
+共用元件，可被 WatermarkPanel、BorderPanel 等呼叫：
+
+```typescript
+interface EffectPreviewProps {
+  buildVfFilter: () => string | null;
+}
+```
+
+UI 設計：
+- 「預覽效果」按鈕（`EyeOutlined`）
+- 按下後 loading，呼叫 `previewFrameEffect(currentFile.path, currentTime, vfFilter)`
+- 結果顯示為 `<img>` 標籤（寬度撐滿面板，max-height: 160px）
+- 若 `buildVfFilter()` 回傳 null 則按鈕 disabled（設定不完整）
+
+#### 整合點
+- `WatermarkPanel.tsx`：匯入 `EffectPreview`，`buildVfFilter` 根據目前文字/圖片模式回傳對應 drawtext/overlay filter 字串
+- `BorderPanel.tsx`（Feature 2）：同樣整合 `EffectPreview`
+
+---
+
+### Feature 2: 影片邊框 (Border)
+
+#### 目標
+在影片四周加上純色邊框（pad filter），可選顏色與寬度。
+
+#### Rust 後端 — `src-tauri/src/commands/ffmpeg.rs`
+
+新增 command `add_border`：
+
+```rust
+#[tauri::command]
+pub async fn add_border(
+    app: tauri::AppHandle,
+    input: String,
+    output: String,
+    top: u32,
+    bottom: u32,
+    left: u32,
+    right: u32,
+    color: String,  // hex 色碼，不含 #，例如 "000000"
+    task_id: String,
+) -> Result<String, String> {
+    // vf = format!("pad=iw+{}:ih+{}:{}:{}:0x{}", left+right, top+bottom, left, top, color)
+    // ffmpeg -i {input} -vf {vf} -c:a copy {output}
+    // 用現有的 run_ffmpeg_with_progress 函式
+}
+```
+
+#### 前端 Service — `src/services/ffmpeg.ts`
+
+```typescript
+export async function addBorder(
+  inputPath: string,
+  outputPath: string,
+  opts: { top: number; bottom: number; left: number; right: number; color: string },
+  onProgress?: ProgressCallback
+): Promise<string> {
+  return runFfmpegOperation('add_border', {
+    input: inputPath,
+    output: outputPath,
+    top: opts.top,
+    bottom: opts.bottom,
+    left: opts.left,
+    right: opts.right,
+    color: opts.color.replace('#', ''),
+  }, onProgress);
+}
+```
+
+#### 前端元件 — `src/components/Editor/BorderPanel.tsx`
+
+State：
+```typescript
+const [borderWidth, setBorderWidth] = useState(20);
+const [useCustom, setUseCustom] = useState(false);
+const [top, setTop] = useState(20);
+const [bottom, setBottom] = useState(20);
+const [left, setLeft] = useState(20);
+const [right, setRight] = useState(20);
+const [color, setColor] = useState('#000000');
+const [loading, setLoading] = useState(false);
+const [progress, setProgress] = useState<string | null>(null);
+```
+
+UI 設計：
+1. `ColorPicker` — 選擇邊框顏色
+2. `Switch` + label "自訂四邊" — 關閉時顯示單一 `Slider`（同時設定四邊），開啟時顯示四個 `InputNumber`（上下左右）
+3. 整合 `EffectPreview`（`buildVfFilter` 回傳 `pad=iw+{l+r}:ih+{t+b}:{l}:{t}:0x{color}` 字串）
+4. 「套用邊框」按鈕 → `save()` dialog → 呼叫 `addBorder`
+
+#### 整合到 EditorPage
+在 `EditorPage.tsx` Tab 清單中新增 `border` tab，匯入並渲染 `<BorderPanel />`。
+
+---
+
+### Feature 3: 浮動圖片 (Floating Image)
+
+#### 目標
+將一張 PNG/GIF 圖片以動態路徑疊加在影片上（如 LOGO 在畫面上移動），輸出為新影片。
+
+#### 動態路徑模式
+
+| 模式 | FFmpeg overlay 運算式概要 |
+|------|--------------------------|
+| `bounce_h` | x 左右彈跳，y 固定置中 |
+| `bounce_v` | x 固定置中，y 上下彈跳 |
+| `diagonal` | x、y 同時彈跳 |
+| `circular` | x/y 為圓形軌道，半徑可設定 |
+
+#### Rust 後端 — `src-tauri/src/commands/ffmpeg.rs`
+
+新增 command `floating_image`：
+
+```rust
+#[tauri::command]
+pub async fn floating_image(
+    app: tauri::AppHandle,
+    input: String,
+    output: String,
+    image: String,       // 圖片絕對路徑
+    motion: String,      // "bounce_h" | "bounce_v" | "diagonal" | "circular"
+    speed: f64,          // 移動速度，預設 1.0
+    scale: u32,          // 圖片縮放百分比 (5~50)
+    opacity: f64,        // 0.0 ~ 1.0
+    radius: u32,         // circular 模式軌道半徑（px），其他模式忽略
+    task_id: String,
+) -> Result<String, String> {
+    // filter_complex 組合邏輯：
+    // step1: [1:v]scale=iw*{scale/100}:ih*{scale/100},format=rgba,colorchannelmixer=aa={opacity}[logo]
+    // step2: 依 motion 產生 x_expr / y_expr
+    //   bounce_h: x='if(lt(mod(t*{speed},2*(W-w)),W-w),mod(t*{speed},W-w),2*(W-w)-mod(t*{speed},W-w))':y=(H-h)/2
+    //   bounce_v: x=(W-w)/2:y='if(lt(mod(t*{speed},2*(H-h)),H-h),mod(t*{speed},H-h),2*(H-h)-mod(t*{speed},H-h))'
+    //   diagonal: 同時套用 bounce_h 和 bounce_v 的 x/y
+    //   circular: x='(W-w)/2+{radius}*cos(t*{speed})':y='(H-h)/2+{radius}*sin(t*{speed})'
+    // step3: [0:v][logo]overlay=x={x_expr}:y={y_expr}[out]
+    // ffmpeg -i {input} -i {image} -filter_complex {complex} -map [out] -map 0:a? -c:a copy {output}
+}
+```
+
+#### 前端 Service — `src/services/ffmpeg.ts`
+
+```typescript
+export async function floatingImage(
+  inputPath: string,
+  outputPath: string,
+  opts: {
+    image: string;
+    motion: 'bounce_h' | 'bounce_v' | 'diagonal' | 'circular';
+    speed: number;
+    scale: number;
+    opacity: number;
+    radius: number;
+  },
+  onProgress?: ProgressCallback
+): Promise<string> {
+  return runFfmpegOperation('floating_image', {
+    input: inputPath,
+    output: outputPath,
+    image: opts.image,
+    motion: opts.motion,
+    speed: opts.speed,
+    scale: opts.scale,
+    opacity: opts.opacity,
+    radius: opts.radius,
+  }, onProgress);
+}
+```
+
+#### 前端元件 — `src/components/Editor/FloatingImagePanel.tsx`
+
+State：
+```typescript
+const [imagePath, setImagePath] = useState('');
+const [motion, setMotion] = useState<'bounce_h'|'bounce_v'|'diagonal'|'circular'>('bounce_h');
+const [speed, setSpeed] = useState(1.0);
+const [scale, setScale] = useState(15);
+const [opacity, setOpacity] = useState(0.9);
+const [radius, setRadius] = useState(100);
+const [loading, setLoading] = useState(false);
+const [progress, setProgress] = useState<string | null>(null);
+```
+
+UI 設計：
+1. 圖片選擇（`open()` dialog，接受 png/gif/webp）+ 顯示已選路徑
+2. `Select` — 動態模式（左右彈跳／上下彈跳／對角線／圓形軌道）
+3. `Slider` — 速度（0.2 ~ 5.0，step 0.1）
+4. `Slider` — 縮放比例（5% ~ 50%）
+5. `Slider` — 透明度（10% ~ 100%）
+6. 僅 circular 模式顯示：`InputNumber` — 軌道半徑（px）
+7. `progress` 字串顯示處理進度
+8. 「套用浮動圖片」按鈕 → `save()` dialog → 呼叫 `floatingImage`
+
+#### 整合到 EditorPage
+新增 `floating` tab，匯入並渲染 `<FloatingImagePanel />`。
+
+---
+
+### Feature 4: 影片轉場效果 (Transitions)
+
+#### 目標
+在合併多段影片時，於相鄰片段間加入過場動畫（淡入淡出、滑動、縮放等）。
+
+#### 支援的轉場效果（FFmpeg xfade filter）
+
+| 顯示名稱 | xfade transition 值 |
+|---------|---------------------|
+| 淡入淡出 | `fade` |
+| 向右滑入 | `slideleft` |
+| 向左滑入 | `slideright` |
+| 向上滑入 | `slidedown` |
+| 向下滑入 | `slideup` |
+| 圈入 | `circlecrop` |
+| 縮放過場 | `zoom` |
+| 水平展開 | `horzopen` |
+
+#### Rust 後端 — `src-tauri/src/commands/ffmpeg.rs`
+
+新增 command `merge_with_transitions`：
+
+```rust
+#[tauri::command]
+pub async fn merge_with_transitions(
+    app: tauri::AppHandle,
+    inputs: Vec<String>,        // 影片路徑陣列（至少 2 個）
+    output: String,
+    transition: String,         // xfade transition 名稱
+    duration: f64,              // 轉場持續秒數（0.3 ~ 2.0）
+    task_id: String,
+) -> Result<String, String> {
+    // 演算法（n 個片段，產生 n-1 個轉場）：
+    // 1. 用 ffprobe 取得每個影片的時長（秒數）
+    // 2. 建構 filter_complex：
+    //    對每對相鄰片段 (i, i+1)：
+    //      video: [prev_v][curr_v]xfade=transition={trans}:duration={dur}:offset={offset}[vN]
+    //      audio: [prev_a][curr_a]acrossfade=d={dur}[aN]
+    //      offset = sum of durations[0..=i] - duration
+    // 3. ffmpeg {-i input}* -filter_complex {complex} -map [vN] -map [aN] -c:v libx264 -c:a aac {output}
+    // 注意：xfade 需要輸入串流為相同解析度/幀率，若不同需先 scale/fps 對齊
+}
+```
+
+#### 前端 Service — `src/services/ffmpeg.ts`
+
+```typescript
+export async function mergeWithTransitions(
+  inputPaths: string[],
+  outputPath: string,
+  opts: { transition: string; duration: number },
+  onProgress?: ProgressCallback
+): Promise<string> {
+  return runFfmpegOperation('merge_with_transitions', {
+    inputs: inputPaths,
+    output: outputPath,
+    transition: opts.transition,
+    duration: opts.duration,
+  }, onProgress);
+}
+```
+
+#### 前端元件 — 更新 `src/components/Editor/MergePanel.tsx`
+
+State 新增：
+```typescript
+const [useTransition, setUseTransition] = useState(false);
+const [transition, setTransition] = useState('fade');
+const [transitionDuration, setTransitionDuration] = useState(0.5);
+```
+
+UI 在「合併」按鈕上方新增「轉場設定」區塊：
+1. `Switch` + label "加入轉場效果"
+2. 開啟時顯示：
+   - `Select` — 轉場效果（含 8 種）
+   - `Slider` — 轉場時長（0.3s ~ 2.0s，step 0.1）
+
+按鈕邏輯：
+- `useTransition === false` → 呼叫現有 `mergeVideos`
+- `useTransition === true` → 呼叫 `mergeWithTransitions`
+
+---
+
+### Feature 1-4 共同待辦：`lib.rs` 更新
+
+在 `src-tauri/src/lib.rs` 的 `generate_handler![]` 中新增：
+
+```rust
+commands::ffmpeg::preview_frame_effect,
+commands::ffmpeg::add_border,
+commands::ffmpeg::floating_image,
+commands::ffmpeg::merge_with_transitions,
+```
+
+---
+
+### 驗收標準
+
+| Feature | 測試步驟 |
+|---------|---------|
+| Effect Preview | 開啟影片 → WatermarkPanel 輸入文字 → 按「預覽效果」→ 顯示已疊加文字的靜態畫面 |
+| Border | 選黑色 20px → 點預覽 → 確認邊框 → 套用 → 輸出影片四周有邊框 |
+| Floating Image | 選 PNG → 選圓形模式 → 套用 → 輸出影片中圖片沿圓形路徑移動 |
+| Transitions | 載入 2 段影片 → 開轉場 → 選淡入淡出 0.5s → 合併 → 輸出中段有淡入淡出 |
