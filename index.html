@@ -5,6 +5,38 @@
     <link rel="icon" type="image/svg+xml" href="/tauri.svg" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <title>FlimCutter - 影片剪輯工具</title>
+    <!--
+      Performance API polyfill — must be a synchronous inline script so it runs
+      BEFORE any ES module (including video.js / @tauri-apps internals) is parsed
+      or evaluated.  Putting this in main.tsx (type="module") is too late because
+      modules are deferred; a library may capture `performance.clearMarks` at
+      module-evaluation time and cache `undefined`, leading to the runtime error
+      "mgt.clearMarks is not a function" inside the Tauri WebView2 host.
+    -->
+    <script>
+      (function () {
+        var p = (typeof globalThis !== 'undefined' && globalThis.performance)
+              || (typeof window !== 'undefined' && window.performance);
+        if (!p) return;
+        var noop     = function () { return undefined; };
+        var noopArr  = function () { return []; };
+        var methods  = [
+          ['clearMarks',           noop],
+          ['clearMeasures',        noop],
+          ['clearResourceTimings', noop],
+          ['mark',                 noop],
+          ['measure',              noop],
+          ['getEntries',           noopArr],
+          ['getEntriesByName',     noopArr],
+          ['getEntriesByType',     noopArr],
+        ];
+        for (var i = 0; i < methods.length; i++) {
+          if (typeof p[methods[i][0]] !== 'function') {
+            p[methods[i][0]] = methods[i][1];
+          }
+        }
+      })();
+    </script>
   </head>
   <body>
     <div id="root"></div>

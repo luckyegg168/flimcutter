@@ -1,4 +1,5 @@
 import { create } from 'zustand';
+import { persist } from 'zustand/middleware';
 import { Settings } from '../types';
 
 const DEFAULTS: Settings = {
@@ -23,7 +24,9 @@ interface SettingsState extends Settings {
   resetSettings: () => void;
 }
 
-export const useSettingsStore = create<SettingsState>((set) => ({
+export const useSettingsStore = create<SettingsState>()(
+  persist(
+    (set) => ({
   ...DEFAULTS,
 
   setDefaultOutputDir: (dir) => set({ defaultOutputDir: dir }),
@@ -35,4 +38,7 @@ export const useSettingsStore = create<SettingsState>((set) => ({
   setYtdlpPath: (path) => set({ ytdlpPath: path }),
   updateSettings: (partial) => set((state) => ({ ...state, ...partial })),
   resetSettings: () => set({ ...DEFAULTS }),
-}));
+}),
+    { name: 'flimcutter-settings' }
+  )
+);

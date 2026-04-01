@@ -5,9 +5,12 @@ import {
   ScissorOutlined,
   SettingOutlined,
   VideoCameraOutlined,
+  BulbOutlined,
+  BulbFilled,
 } from '@ant-design/icons';
 import { useTranslation } from 'react-i18next';
 import { PageKey } from '../../App';
+import { useSettingsStore } from '../../stores/settingsStore';
 
 const { Sider, Content } = Layout;
 
@@ -25,6 +28,10 @@ interface NavItem {
 
 const MainLayout: React.FC<MainLayoutProps> = ({ activePage, onNavigate, children }) => {
   const { t } = useTranslation();
+  const themeMode = useSettingsStore((s) => s.theme);
+  const setTheme = useSettingsStore((s) => s.setTheme);
+  const isDark = themeMode === 'dark' || (themeMode === 'system' && window.matchMedia('(prefers-color-scheme: dark)').matches);
+  const toggleTheme = () => setTheme(isDark ? 'light' : 'dark');
 
   const navItems: NavItem[] = [
     { key: 'download', icon: <DownloadOutlined />, label: t('nav.download') },
@@ -70,6 +77,7 @@ const MainLayout: React.FC<MainLayoutProps> = ({ activePage, onNavigate, childre
               flexDirection: 'column',
               gap: 4,
               padding: '8px 6px',
+              height: '100%',
             }}
           >
             {navItems.map((item) => (
@@ -83,6 +91,19 @@ const MainLayout: React.FC<MainLayoutProps> = ({ activePage, onNavigate, childre
                 </div>
               </Tooltip>
             ))}
+            {/* 主題切換 */}
+            <div style={{ marginTop: 'auto', paddingTop: 8 }}>
+              <Tooltip title={isDark ? '切換亮色主題' : '切換暗色主題'} placement="right">
+                <div
+                  className="sidebar-nav-item"
+                  onClick={toggleTheme}
+                  style={{ color: isDark ? '#888' : '#faad14' }}
+                >
+                  {isDark ? <BulbOutlined /> : <BulbFilled />}
+                  <span style={{ fontSize: 10 }}>{isDark ? '亮色' : '暗色'}</span>
+                </div>
+              </Tooltip>
+            </div>
           </div>
         </Sider>
 

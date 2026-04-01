@@ -1,10 +1,11 @@
-import React, { useState, useCallback } from 'react';
+import React, { useState, useCallback, useEffect } from 'react';
 import {
   Button,
   Typography,
   App,
   Tooltip,
 } from 'antd';
+import { listen } from '@tauri-apps/api/event';
 import {
   FolderOpenOutlined,
   ScissorOutlined,
@@ -52,8 +53,13 @@ const EditorPage: React.FC = () => {
   const { message } = App.useApp();
   const currentFile = useVideoStore((s) => s.currentFile);
   const setCurrentFile = useVideoStore((s) => s.setCurrentFile);
+  const currentTime = useVideoStore((s) => s.currentTime);
+  const duration = useVideoStore((s) => s.duration);
+  const setCurrentTime = useVideoStore((s) => s.setCurrentTime);
   const [activeTab, setActiveTab] = useState('trim');
+  const [isDragOver, setIsDragOver] = useState(false);
 
+  // ── Define handleOpenFile first so Effects can reference it ──────────────
   const handleOpenFile = useCallback(async () => {
     const selected = await open({
       multiple: false,
@@ -75,6 +81,50 @@ const EditorPage: React.FC = () => {
     }
   }, [setCurrentFile, message]);
 
+  // ── Tauri drag-drop file import ───────────────────────────────────────────
+  useEffect(() => {
+    const VIDEO_EXTS = /\.(mp4|mkv|avi|mov|webm|flv|wmv|m4v|ts|mts|3gp)$/i;
+    const dropP  = listen<{ paths: string[] }>('tauri://drag-drop', async (e) => {
+      setIsDragOver(false);
+      const paths = e.payload.paths.filter((p) => VIDEO_EXTS.test(p));
+      if (paths.length === 0) return;
+      try {
+        const info = await getVideoInfo(paths[0]);
+        setCurrentFile(info);
+      } catch (err) {
+        message.error('無法開啟影片: ' + String(err));
+      }
+    });
+    const enterP = listen('tauri://drag-enter', () => setIsDragOver(true));
+    const leaveP = listen('tauri://drag-leave', () => setIsDragOver(false));
+    return () => {
+      dropP.then((fn) => fn());
+      enterP.then((fn) => fn());
+      leaveP.then((fn) => fn());
+    };
+  }, [setCurrentFile, message, handleOpenFile]);
+
+  // ── Keyboard shortcuts ────────────────────────────────────────────────────
+  // ← / → seek ±5s (±1s with Shift);  Ctrl+O open file
+  useEffect(() => {
+    const handleKey = (e: KeyboardEvent) => {
+      const tag = (e.target as HTMLElement).tagName;
+      if (tag === 'INPUT' || tag === 'TEXTAREA') return;
+      if (e.key === 'ArrowLeft' && !e.ctrlKey && !e.metaKey) {
+        e.preventDefault();
+        setCurrentTime(Math.max(0, currentTime - (e.shiftKey ? 1 : 5)));
+      } else if (e.key === 'ArrowRight' && !e.ctrlKey && !e.metaKey) {
+        e.preventDefault();
+        setCurrentTime(Math.min(duration, currentTime + (e.shiftKey ? 1 : 5)));
+      } else if (e.key === 'o' && (e.ctrlKey || e.metaKey)) {
+        e.preventDefault();
+        handleOpenFile();
+      }
+    };
+    window.addEventListener('keydown', handleKey);
+    return () => window.removeEventListener('keydown', handleKey);
+  }, [currentTime, duration, setCurrentTime, handleOpenFile]);
+
   const tabs = [
     { key: 'trim',     icon: <ScissorOutlined />,      label: '裁切' },
     { key: 'split',    icon: <SplitCellsOutlined />,    label: '分割' },
@@ -94,7 +144,24 @@ const EditorPage: React.FC = () => {
   ];
 
   return (
-    <div style={{ height: '100%', display: 'flex', overflow: 'hidden' }}>
+    <div
+      style={{ height: '100%', display: 'flex', overflow: 'hidden', position: 'relative' }}
+    >
+      {/* Drag-over overlay */}
+      {isDragOver && (
+        <div style={{
+          position: 'absolute', inset: 0, zIndex: 100,
+          background: 'rgba(22, 119, 255, 0.18)',
+          border: '2px dashed #1677ff',
+          borderRadius: 8,
+          display: 'flex',
+          alignItems: 'center',
+          justifyContent: 'center',
+          pointerEvents: 'none',
+        }}>
+          <span style={{ color: '#1677ff', fontSize: 18, fontWeight: 600 }}>拖放影片至此</span>
+        </div>
+      )}
       {/* Left - Player area */}
       <div style={{ flex: 1, minWidth: 0, display: 'flex', flexDirection: 'column', padding: 12, gap: 8 }}>
         {/* Player */}

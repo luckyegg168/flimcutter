@@ -1,4 +1,5 @@
 import { create } from 'zustand';
+import { persist } from 'zustand/middleware';
 import { DownloadTask, VideoInfo, VideoFormat } from '../types';
 
 interface DownloadState {
@@ -15,7 +16,9 @@ interface DownloadState {
 
 let taskCounter = 0;
 
-export const useDownloadStore = create<DownloadState>((set) => ({
+export const useDownloadStore = create<DownloadState>()(
+  persist(
+    (set) => ({
   tasks: [],
   activeTaskId: null,
 
@@ -63,4 +66,15 @@ export const useDownloadStore = create<DownloadState>((set) => ({
         t.id === id ? { ...t, selectedFormat: format } : t
       ),
     })),
-}));
+}),
+    {
+      name: 'flimcutter-download-history',
+      // 只持久化已完成/失敗的任務作為歷史記錄；進行中的任務不需要恢復
+      partialize: (state) => ({
+        tasks: state.tasks.filter(
+          (t) => t.status === 'completed' || t.status === 'failed'
+        ),
+      }),
+    }
+  )
+);
