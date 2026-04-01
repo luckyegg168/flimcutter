@@ -25,6 +25,7 @@ pub struct DownloadTask {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
 pub struct FfmpegProgress {
     pub task_id: String,
     pub progress: f64,

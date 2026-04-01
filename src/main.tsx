@@ -1,5 +1,4 @@
 import '@/i18n';
-import 'video.js/dist/video-js.css';
 import './index.css';
 import React from 'react';
 import ReactDOM from 'react-dom/client';

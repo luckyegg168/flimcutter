@@ -19,20 +19,20 @@ export async function startDownload(
   const unlisten = await listen<{
     task_id: string;
     progress: number;
-    speed: string;
-    eta: string;
+    speed?: string;
+    eta?: string;
     output_path?: string;
     error?: string;
-    completed: boolean;
+    status: 'pending' | 'running' | 'completed' | 'failed' | 'cancelled';
   }>('download_progress', (event) => {
     if (event.payload.task_id !== taskId) return;
-    const { progress, speed, eta, completed, error, output_path } = event.payload;
-    if (error) {
-      onError(error);
-    } else if (completed && output_path) {
-      onComplete(output_path);
+    const { progress, speed, eta, status, error, output_path } = event.payload;
+    if (status === 'failed' || error) {
+      onError(error ?? 'Download failed');
+    } else if (status === 'completed') {
+      onComplete(output_path ?? '');
     } else {
-      onProgress(progress, speed, eta);
+      onProgress(progress, speed ?? '', eta ?? '');
     }
   });
 

@@ -24,7 +24,11 @@
       }
     ],
     "security": {
-      "csp": "default-src 'self' asset: https://asset.localhost; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' asset: https://asset.localhost data: blob:; media-src 'self' asset: https://asset.localhost blob:;"
+      "csp": "default-src 'self' asset: https://asset.localhost; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' asset: https://asset.localhost data: blob:; media-src 'self' asset: https://asset.localhost blob:;",
+      "assetProtocol": {
+        "enable": true,
+        "scope": ["**"]
+      }
     }
   },
   "bundle": {
@@ -43,25 +47,7 @@
   },
   "plugins": {
     "shell": {
-      "open": true,
-      "sidecar": true,
-      "scope": [
-        {
-          "name": "binaries/ffmpeg",
-          "sidecar": true
-        },
-        {
-          "name": "binaries/yt-dlp",
-          "sidecar": true
-        }
-      ]
-    },
-    "dialog": {
-      "all": true
-    },
-    "fs": {
-      "all": true,
-      "scope": ["**"]
+      "open": true
     }
   }
 }

@@ -26,5 +26,5 @@ pub fn estimate_output_size(metadata: &VideoMetadata, crf: u32) -> u64 {
         28..=35 => 0.15,
         _ => 0.08,
     };
-    (metadata.file_size as f64 * quality_factor) as u64
+    (metadata.size as f64 * quality_factor) as u64
 }

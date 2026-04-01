@@ -1,6 +1,6 @@
 import React, { useState } from 'react';
 import { Button, App, Typography, Space, Tag } from 'antd';
-import { ScissorOutlined } from '@ant-design/icons';
+import { ScissorOutlined, StepBackwardOutlined, StepForwardOutlined } from '@ant-design/icons';
 import { useVideoStore } from '../../stores/videoStore';
 import { trimVideo, formatTime } from '../../services/ffmpeg';
 import { save } from '@tauri-apps/plugin-dialog';
@@ -12,6 +12,9 @@ const TrimPanel: React.FC = () => {
   const currentFile = useVideoStore((s) => s.currentFile);
   const trimStart = useVideoStore((s) => s.trimStart);
   const trimEnd = useVideoStore((s) => s.trimEnd);
+  const currentTime = useVideoStore((s) => s.currentTime);
+  const setTrimStart = useVideoStore((s) => s.setTrimStart);
+  const setTrimEnd = useVideoStore((s) => s.setTrimEnd);
   const [loading, setLoading] = useState(false);
   const [progress, setProgress] = useState<string | null>(null);
 
@@ -46,20 +49,34 @@ const TrimPanel: React.FC = () => {
         <ScissorOutlined /> 影片裁切
       </Text>
       <Space direction="vertical" style={{ width: '100%' }} size={6}>
-        <div style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
-          <Text style={{ color: '#888', fontSize: 12, width: 52 }}>開始</Text>
-          <Tag color="blue">{formatTime(trimStart)}</Tag>
+        <div style={{ display: 'flex', gap: 6, alignItems: 'center' }}>
+          <Button
+            size="small"
+            icon={<StepBackwardOutlined />}
+            onClick={() => setTrimStart(currentTime)}
+            title="設為開始點"
+          >
+            設為開始
+          </Button>
+          <Tag color="blue" style={{ margin: 0 }}>{formatTime(trimStart)}</Tag>
         </div>
-        <div style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
-          <Text style={{ color: '#888', fontSize: 12, width: 52 }}>結束</Text>
-          <Tag color="blue">{formatTime(trimEnd)}</Tag>
+        <div style={{ display: 'flex', gap: 6, alignItems: 'center' }}>
+          <Button
+            size="small"
+            icon={<StepForwardOutlined />}
+            onClick={() => setTrimEnd(currentTime)}
+            title="設為結束點"
+          >
+            設為結束
+          </Button>
+          <Tag color="blue" style={{ margin: 0 }}>{formatTime(trimEnd)}</Tag>
         </div>
         <div style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
           <Text style={{ color: '#888', fontSize: 12, width: 52 }}>時長</Text>
           <Tag color="green">{formatTime(trimEnd - trimStart)}</Tag>
         </div>
         <Text style={{ color: '#555', fontSize: 11 }}>
-          拖曳時間軸上的藍色把手來選取區間
+          拖曳紅色播放線到目標位置，按「設為開始/結束」定義裁切區間
         </Text>
         {progress && <Text style={{ color: '#aaa', fontSize: 10 }}>{progress}</Text>}
         <Button

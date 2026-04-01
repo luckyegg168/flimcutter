@@ -1,1 +1,10 @@
-{}
+{
+  "permissions": {
+    "allow": [
+      "Bash(\"src-tauri/binaries/yt-dlp-x86_64-pc-windows-msvc.exe\" --version)",
+      "Bash(\"src-tauri/binaries/yt-dlp-x86_64-pc-windows-msvc.exe\" --dump-json --no-playlist --flat-playlist \"https://www.youtube.com/watch?v=430XYwg96Nw\")",
+      "Bash(ls D:/flimcutter/src-tauri/target/debug/*.exe)",
+      "Bash(ls:*)"
+    ]
+  }
+}

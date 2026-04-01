@@ -112,7 +112,7 @@ async fn get_metadata_internal(app: &AppHandle, input: &str) -> Result<VideoMeta
         .shell()
         .sidecar("ffmpeg")
         .map_err(|e| e.to_string())?
-        .args(["-i", input, "-f", "null", "-"])
+        .args(["-i", input])
         .spawn()
         .map_err(|e| e.to_string())?;
 
@@ -203,15 +203,15 @@ fn parse_ffmpeg_info(stderr: &str, path: &str) -> Result<VideoMetadata, String> 
 
     Ok(VideoMetadata {
         path: path.to_string(),
-        filename,
+        name: filename,
         duration,
         width,
         height,
         fps,
-        video_codec,
+        codec: video_codec,
         audio_codec,
         bitrate,
-        file_size,
+        size: file_size,
         format,
     })
 }
@@ -812,4 +812,80 @@ pub async fn detect_scenes(
 
     timestamps.dedup_by(|a, b| (*a - *b).abs() < 0.1);
     Ok(timestamps)
+}
+
+#[tauri::command]
+pub async fn watermark_video(
+    app: AppHandle,
+    input: String,
+    output: String,
+    text: String,
+    position: String, // "topleft" | "topright" | "bottomleft" | "bottomright" | "center"
+    font_size: u32,
+    color: String,    // e.g. "white", "black", "#FF0000"
+    opacity: f64,     // 0.0 – 1.0
+    task_id: String,
+) -> Result<String, String> {
+    let meta = get_metadata_internal(&app, &input).await?;
+
+    // Escape special characters for drawtext filter
+    let escaped = text
+        .replace('\\', "\\\\")
+        .replace(':', "\\:")
+        .replace('\'', "\\'");
+
+    let x_expr = match position.as_str() {
+        "topleft" | "bottomleft" => "20".to_string(),
+        "topright" | "bottomright" => "(w-text_w-20)".to_string(),
+        _ => "(w-text_w)/2".to_string(), // center
+    };
+    let y_expr = match position.as_str() {
+        "topleft" | "topright" => "20".to_string(),
+        "bottomleft" | "bottomright" => "(h-text_h-20)".to_string(),
+        _ => "(h-text_h)/2".to_string(), // center
+    };
+
+    // Clamp opacity to 0–1
+    let alpha = opacity.clamp(0.0, 1.0);
+
+    let drawtext = format!(
+        "drawtext=text='{}':fontsize={}:fontcolor={}@{:.2}:x={}:y={}",
+        escaped, font_size, color, alpha, x_expr, y_expr
+    );
+
+    let args = vec![
+        "-y".to_string(),
+        "-i".to_string(), input,
+        "-vf".to_string(), drawtext,
+        "-codec:a".to_string(), "copy".to_string(),
+        output.clone(),
+    ];
+    run_ffmpeg_with_progress(&app, args, &task_id, meta.duration).await?;
+    Ok(output)
+}
+
+#[tauri::command]
+pub async fn crop_video(
+    app: AppHandle,
+    input: String,
+    output: String,
+    width: u32,
+    height: u32,
+    x: u32,
+    y: u32,
+    task_id: String,
+) -> Result<String, String> {
+    let meta = get_metadata_internal(&app, &input).await?;
+
+    let vf = format!("crop={}:{}:{}:{}", width, height, x, y);
+
+    let args = vec![
+        "-y".to_string(),
+        "-i".to_string(), input,
+        "-vf".to_string(), vf,
+        "-codec:a".to_string(), "copy".to_string(),
+        output.clone(),
+    ];
+    run_ffmpeg_with_progress(&app, args, &task_id, meta.duration).await?;
+    Ok(output)
 }

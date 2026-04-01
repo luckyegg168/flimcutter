@@ -1,17 +1,18 @@
 use serde::{Deserialize, Serialize};
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
 pub struct VideoMetadata {
     pub path: String,
-    pub filename: String,
+    pub name: String,
     pub duration: f64,
     pub width: u32,
     pub height: u32,
     pub fps: f64,
-    pub video_codec: String,
+    pub codec: String,
     pub audio_codec: String,
     pub bitrate: u64,
-    pub file_size: u64,
+    pub size: u64,
     pub format: String,
 }
 
@@ -19,21 +20,22 @@ impl Default for VideoMetadata {
     fn default() -> Self {
         Self {
             path: String::new(),
-            filename: String::new(),
+            name: String::new(),
             duration: 0.0,
             width: 0,
             height: 0,
             fps: 0.0,
-            video_codec: String::new(),
+            codec: String::new(),
             audio_codec: String::new(),
             bitrate: 0,
-            file_size: 0,
+            size: 0,
             format: String::new(),
         }
     }
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
 pub struct VideoFormat {
     pub format_id: String,
     pub ext: String,
@@ -44,9 +46,12 @@ pub struct VideoFormat {
     pub filesize: Option<u64>,
     pub tbr: Option<f64>,
     pub format_note: Option<String>,
+    pub has_video: bool,
+    pub has_audio: bool,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
 pub struct VideoInfo {
     pub id: String,
     pub title: String,

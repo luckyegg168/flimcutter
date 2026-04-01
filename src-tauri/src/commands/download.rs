@@ -68,6 +68,8 @@ fn parse_ytdlp_json(json_str: &str, url: &str) -> Result<VideoInfo, String> {
             let acodec = f["acodec"].as_str()
                 .filter(|&c| c != "none")
                 .map(|s| s.to_string());
+            let has_video = vcodec.is_some();
+            let has_audio = acodec.is_some();
             let filesize = f["filesize"].as_u64()
                 .or_else(|| f["filesize_approx"].as_u64());
             let tbr = f["tbr"].as_f64();
@@ -80,6 +82,8 @@ fn parse_ytdlp_json(json_str: &str, url: &str) -> Result<VideoInfo, String> {
                 fps,
                 vcodec,
                 acodec,
+                has_video,
+                has_audio,
                 filesize,
                 tbr,
                 format_note,

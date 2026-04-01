@@ -70,7 +70,7 @@ const DownloadPage: React.FC = () => {
       }
       setUrl('');
     } catch (err) {
-      message.error(t('download.errors.analyzeFailed'));
+      message.error(`解析失敗: ${err}`);
     } finally {
       setAnalyzing(false);
     }

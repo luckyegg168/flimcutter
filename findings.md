@@ -1,163 +1,209 @@
-# FlimCutter - 研究發現
+# FlimCutter — Bug Findings & Fix Plan
 
-## 技術選型決策
-
-### 桌面框架：Tauri v2
-- Rust 後端，效能佳，安裝包小
-- Sidecar 模式可捆綁 FFmpeg / yt-dlp 二進位檔
-- 前端使用 Web 技術，開發效率高
-
-### 前端：React + TypeScript + Vite
-- 生態系成熟，元件豐富
-- TypeScript 提供型別安全
-
-### UI 元件庫：Ant Design 5
-- 原生 zh-TW i18n 支援完善
-- 元件豐富（Table、Modal、Slider、Progress、Upload 等）
-- 深色/淺色主題切換內建支援
-- 適合複雜桌面應用
-
-### 狀態管理：Zustand
-- 輕量、簡單、效能好
-- 適合中型應用
-
-### 影片播放器：video.js
-- 最成熟的 Web 影片播放器
-- 支援自訂控制列、時間軸互動
-- 廣泛的編解碼器支援
-
-### i18n：react-i18next
-- 搭配 Ant Design 的 ConfigProvider locale
-- JSON 翻譯檔，易於維護
+> Generated for Agent review. All bugs below are confirmed from runtime errors or code inspection.
+> The codebase is Tauri v2 + React + TypeScript + Rust.
 
 ---
 
-## Qwen3 ASR 整合方案
+## Root Cause Summary
 
-### 選定方式：透過 API URL 呼叫（vLLM OpenAI-compatible）
-- 使用者在設定頁面填入 API URL（例如 `http://localhost:8000/v1`）
-- 透過 OpenAI SDK 格式呼叫 `POST /v1/audio/transcriptions`
-- Rust 後端使用 `reqwest` multipart/form-data 上傳音訊
-- 支援 30 種語言 + 22 種中文方言
-- 模型：`Qwen/Qwen3-ASR-0.6B` 或 `Qwen/Qwen3-ASR-1.7B`
+Two systematic issues explain nearly every runtime error:
 
-### 功能延伸
-- 語音轉文字 → 自動產生字幕（SRT/VTT）
-- 多語言辨識 → 自動偵測語言
-- 音訊需先由 FFmpeg 提取為 WAV 16kHz mono 再送 API
+### 1. Tauri v2 Command Argument Naming Convention (CRITICAL)
 
----
+Tauri v2 automatically converts **Rust snake_case parameter names → camelCase** for the JS `invoke()` API.
 
-## Tauri v2 Sidecar 模式
+| Rust param | JS invoke key must be |
+|---|---|
+| `task_id` | `taskId` |
+| `split_points` | `splitPoints` |
+| `output_dir` | `outputDir` |
+| `video_codec` | `videoCodec` |
+| `audio_codec` | `audioCodec` |
+| `input` | `input` (single word, unchanged) |
+| `output` | `output` (single word, unchanged) |
 
-### 目錄結構
-```
-src-tauri/
-├── binaries/
-│   ├── ffmpeg-x86_64-pc-windows-msvc.exe
-│   └── yt-dlp-x86_64-pc-windows-msvc.exe
-```
+**Current broken state** in `src/services/ffmpeg.ts`:
+- `trimVideo` sends `{ inputPath, outputPath, startTime, endTime, task_id }` → Rust expects `{ input, output, start, end, taskId }`
+- `splitVideo` sends `{ inputPath, outputDir, splitPoints }` → should be `{ input, outputDir, splitPoints, taskId }`
+- `mergeVideos` sends `{ inputPaths, outputPath }` → should be `{ inputs, output, taskId }`
+- `extractAudio` sends `{ inputPath, outputPath, format, bitrate }` → should be `{ input, output, format, taskId }` (no bitrate in Rust)
+- `convertVideo` sends `{ inputPath, outputPath, videoCodec, audioCodec, crf }` → should be `{ input, output, videoCodec, audioCodec, crf, taskId }`
+- `compressVideo` sends `{ inputPath, outputPath, crf, preset, resolution }` → should be `{ input, output, crf, preset, resolution, taskId }`
+- `takeScreenshot` sends `{ inputPath, outputPath, time }` → should be `{ input, output, timestamp }`
+- `makeGif` sends `{ inputPath, outputPath, startTime, endTime, fps, width }` → should be `{ input, output, start, end, fps, width, taskId }`
+- `adjustSpeed` sends `{ inputPath, outputPath, speed }` → should be `{ input, output, speed, taskId }`
+- `rotateVideo` sends `{ inputPath, outputPath, rotation: string }` → should be `{ input, output, rotation: number (90|180|270), flip: string|null, taskId }`
+- `adjustVolume` sends `{ inputPath, outputPath, volume }` → should be `{ input, output, volume, taskId }`
+- `detectScenes` sends `{ inputPath, threshold }` → should be `{ input, threshold }`
+- `getVideoInfo` fixed: sends `{ path: inputPath }` ✓
 
-### 重點
-- `tauri.conf.json` 的 `bundle.externalBin` 設定 sidecar
-- 命名規則：`{name}-{target_triple}[.exe]`
-- 用 `Command::sidecar()` 呼叫
-- 透過 stdout 解析 `-progress pipe:1` 取得進度
+**The `runFfmpegOperation` helper** currently appends `task_id` (snake_case).
+**Fix**: append `taskId` (camelCase) to match Tauri v2 convention.
 
----
+**Progress event listener** currently listens for `task_id` field.
+**Fix**: listen for `taskId` field (after adding `rename_all = "camelCase"` to `FfmpegProgress`).
 
-## FFmpeg 指令參考
+### 2. Rust Model Serialization — Missing `#[serde(rename_all = "camelCase")]`
 
-### 裁切
-```
-ffmpeg -i input -ss START -to END -c:v copy -c:a copy output
-```
+`VideoMetadata` serializes field names in **snake_case**, but TypeScript `VideoFile` interface uses **camelCase**.
 
-### 合併（concat demuxer，同編碼最快）
-```
-ffmpeg -f concat -safe 0 -i list.txt -c:v copy -c:a copy output
-```
+Mismatches:
+| Rust field | Serialized as | TS VideoFile expects |
+|---|---|---|
+| `filename` | `filename` | `name` |
+| `file_size` | `file_size` | `size` |
+| `video_codec` | `video_codec` | `codec` |
 
-### 分割
-```
-ffmpeg -i input -f segment -segment_time 60 -c:v copy -c:a copy out_%03d.mp4
-```
+Fix: Add `#[serde(rename_all = "camelCase")]` to `VideoMetadata` AND rename fields to align with TS interface.
 
-### 音訊提取
-```
-ffmpeg -i input -vn -acodec pcm_s16le -ar 44100 out.wav      # WAV
-ffmpeg -i input -vn -c:a libmp3lame -b:a 320k out.mp3         # MP3
-ffmpeg -i input -vn -c:a flac out.flac                         # FLAC
-```
-
-### 格式轉換
-```
-ffmpeg -i input -c:v libx264 -crf 23 -c:a aac -b:a 128k out.mp4    # H.264
-ffmpeg -i input -c:v libvpx-vp9 -crf 30 -b:v 0 -c:a libopus out.webm # VP9
-```
-
-### 壓縮（CRF 值越低品質越高）
-```
-ffmpeg -i input -c:v libx264 -crf 28 -preset medium out.mp4
-```
-- CRF: 18=近無損, 23=預設, 28=中等, 35=低品質
-- preset: ultrafast / fast / medium / slow / veryslow
-
-### 浮水印
-```
-ffmpeg -i input -i watermark.png -filter_complex "overlay=W-w-10:H-h-10" out.mp4
-```
-
-### 速度調整
-```
-ffmpeg -i input -filter:v "setpts=0.5*PTS" -filter:a "atempo=2.0" out.mp4  # 2x
-ffmpeg -i input -filter:v "setpts=2.0*PTS" -filter:a "atempo=0.5" out.mp4  # 0.5x
-```
-
-### 旋轉/翻轉
-```
-ffmpeg -i input -filter:v "transpose=1" out.mp4    # 順時針90°
-ffmpeg -i input -filter:v "hflip" out.mp4           # 水平翻轉
-ffmpeg -i input -filter:v "vflip" out.mp4           # 垂直翻轉
-```
-
-### 淡入淡出
-```
-ffmpeg -i input -filter:v "fade=t=in:st=0:d=2,fade=t=out:st=58:d=2" out.mp4
-ffmpeg -i input -filter:a "afade=t=in:st=0:d=2,afade=t=out:st=58:d=2" out.mp4
-```
-
-### 場景偵測
-```
-ffmpeg -i input -filter:v "select='gt(scene,0.4)',showinfo" -f null - 2>&1 | grep showinfo
-```
-- threshold: 0.3=敏感, 0.4=正常, 0.7=嚴格
-
-### 截圖 / GIF
-```
-ffmpeg -i input -ss 5 -vframes 1 screenshot.jpg
-ffmpeg -i input -vf "fps=10,scale=640:-1:flags=lanczos" -loop 0 out.gif
-```
-
-### 字幕提取
-```
-ffmpeg -i input -map 0:s:0 out.srt
-ffmpeg -i input -map 0:s:0 out.ass
-ffmpeg -i input -map 0:s:0 out.vtt
-```
-
-### 進度追蹤
-```
-ffmpeg -i input -progress pipe:1 ... output
-```
-- 輸出 key=value：`frame`, `fps`, `time`, `speed`, `progress=continue|end`
-- 進度百分比 = current_time / total_duration * 100
+`FfmpegProgress` also missing `#[serde(rename_all = "camelCase")]`:
+- `task_id` serializes as `"task_id"` but after fix should be `"taskId"`
+- `current_time` → `"currentTime"`, `total_time` → `"totalTime"`
 
 ---
 
-## 注意事項
-- vLLM ASR 服務需使用者自行部署或提供遠端 URL
-- 音訊送 ASR 前需 FFmpeg 轉換為 WAV 16kHz mono
-- FFmpeg copy 模式（不重編碼）速度最快，但裁切點可能不精確（需對齊 keyframe）
-- 精確裁切需重編碼：移除 `-c:v copy`，改用 `-c:v libx264`
-- yt-dlp 更新頻繁，建議支援使用者自行更新 binary
+## Per-File Fix Checklist
+
+### `src/services/ffmpeg.ts` — rewrite invoke calls
+
+```typescript
+// runFfmpegOperation helper
+const taskId = `${command}_${Date.now()}`;
+// listen for taskId (camelCase, after FfmpegProgress gets rename_all)
+listen<{ taskId: string; progress: number }>('ffmpeg_progress', (e) => {
+  if (e.payload.taskId === taskId) onProgress(e.payload.progress);
+});
+// invoke with taskId
+return await invoke<string>(command, { ...args, taskId });
+
+// trimVideo
+invoke('trim_video', { input, output, start, end, taskId })
+
+// splitVideo
+invoke('split_video', { input, splitPoints, outputDir, taskId })
+
+// mergeVideos
+invoke('merge_videos', { inputs, output, taskId })
+
+// extractAudio  (no bitrate param in Rust)
+invoke('extract_audio', { input, output, format, taskId })
+
+// convertVideo
+invoke('convert_video', { input, output, videoCodec, audioCodec, crf, taskId })
+
+// compressVideo
+invoke('compress_video', { input, output, crf, preset, resolution, taskId })
+
+// takeScreenshot  (no taskId)
+invoke('take_screenshot', { input, output, timestamp })
+
+// makeGif
+invoke('make_gif', { input, output, start, end, fps, width, taskId })
+
+// adjustSpeed
+invoke('adjust_speed', { input, output, speed, taskId })
+
+// rotateVideo — rotation must be number (90|180|270), flip is separate string|null
+invoke('rotate_video', { input, output, rotation: rotationNumber, flip: flipString ?? null, taskId })
+
+// adjustVolume
+invoke('adjust_volume', { input, output, volume, taskId })
+
+// detectScenes (no taskId)
+invoke('detect_scenes', { input, threshold })
+```
+
+### `src-tauri/src/models/video.rs`
+
+```rust
+// VideoMetadata — add serde rename + align field names with TS VideoFile
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct VideoMetadata {
+    pub path: String,
+    pub name: String,     // renamed from: filename
+    pub duration: f64,
+    pub width: u32,
+    pub height: u32,
+    pub fps: f64,
+    pub codec: String,    // renamed from: video_codec
+    pub bitrate: u64,
+    pub size: u64,        // renamed from: file_size
+    pub format: String,
+}
+```
+
+After renaming fields, update the struct construction in `parse_ffmpeg_info` in `src-tauri/src/commands/ffmpeg.rs`:
+```rust
+Ok(VideoMetadata {
+    path: path.to_string(),
+    name: filename,
+    duration,
+    width,
+    height,
+    fps,
+    codec: video_codec,
+    bitrate,
+    size: file_size,
+    format,
+})
+```
+
+### `src-tauri/src/models/task.rs`
+
+```rust
+// FfmpegProgress — add camelCase so JS event listener gets taskId
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct FfmpegProgress {
+    pub task_id: String,      // → "taskId"
+    pub progress: f64,
+    pub current_time: f64,    // → "currentTime"
+    pub total_time: f64,      // → "totalTime"
+    pub speed: Option<String>,
+    pub fps: Option<f64>,
+    pub bitrate: Option<String>,
+}
+```
+
+### `src/components/Editor/RotatePanel.tsx`
+
+Verify that the `rotateVideo` call passes `rotation` as a **number** (90, 180, or 270), not a string. The Rust command expects `rotation: u32`.
+
+---
+
+## Other Bugs Already Fixed (do not revert)
+
+| Fix | File | Status |
+|---|---|---|
+| Sidecar name `"yt-dlp"` / `"ffmpeg"` (not `"binaries/..."`) | `commands/download.rs`, `commands/ffmpeg.rs`, `commands/asr.rs` | ✓ Fixed |
+| `plugins.shell.scope/sidecar` removed from tauri.conf.json | `tauri.conf.json` | ✓ Fixed |
+| `plugins.dialog` / `plugins.fs` removed from tauri.conf.json | `tauri.conf.json` | ✓ Fixed |
+| Dev sidecar binaries copied with triple suffix | `build.rs` | ✓ Fixed |
+| `VideoFormat` fields `has_video` / `has_audio` added | `models/video.rs`, `commands/download.rs` | ✓ Fixed |
+| `VideoFormat` / `VideoInfo` `#[serde(rename_all = "camelCase")]` | `models/video.rs` | ✓ Fixed |
+| `DownloadProgress` — JS listener checks `status` not `completed` | `services/downloader.ts` | ✓ Fixed |
+| `getVideoInfo` param renamed `inputPath` → `path` | `services/ffmpeg.ts` | ✓ Fixed |
+| Video player replaced video.js with native `<video>` element | `VideoPlayer.tsx` | ✓ Fixed |
+| Timeline seek syncs to native video element | `VideoPlayer.tsx` | ✓ Fixed |
+| File dialog double-open caused by event bubbling | `EditorPage.tsx` | ✓ Fixed |
+| `assetProtocol.enable: true` for local video file access | `tauri.conf.json` | ✓ Fixed |
+| `ffmpeg -i input` (not `-f null -`) for fast metadata read | `commands/ffmpeg.rs` | ✓ Fixed |
+| TrimPanel — added "設為開始" / "設為結束" buttons | `TrimPanel.tsx` | ✓ Fixed |
+
+---
+
+## Key Tauri v2 Conventions (for Agent reference)
+
+1. **`invoke(cmd, args)` key naming**: JS keys must be camelCase; they map to Rust snake_case params automatically.
+   - Rust `task_id: String` → JS `{ taskId: '...' }`
+   - Rust `split_points: Vec<f64>` → JS `{ splitPoints: [...] }`
+
+2. **Serde serialization for events**: Structs emitted via `app.emit()` use Rust's default field names (snake_case) unless `#[serde(rename_all = "camelCase")]` is added. JS listeners must match the emitted key names.
+
+3. **`tauri.conf.json` `plugins` section**: In Tauri v2, only `shell: { open: bool }` is valid here. Sidecar scope, dialog config, and fs config belong in capability files or are no longer needed.
+
+4. **`externalBin` and `sidecar()` naming**: In `tauri.conf.json`, `externalBin: ["binaries/yt-dlp"]`. In Rust, `sidecar("yt-dlp")` (just the binary name, not the path). Tauri resolves the binary by appending the target triple: `yt-dlp-x86_64-pc-windows-msvc.exe` next to the executable. In dev mode, a copy with the triple suffix must exist in `target/debug/` — `build.rs` handles this.
+
+5. **Asset protocol**: For `convertFileSrc()` to work (local video playback), `app.security.assetProtocol.enable: true` and `scope: ["**"]` must be set in `tauri.conf.json`.
