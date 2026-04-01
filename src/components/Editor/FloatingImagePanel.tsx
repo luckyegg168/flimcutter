@@ -77,7 +77,7 @@ const FloatingImagePanel: React.FC = () => {
             <Input
               value={imagePath}
               readOnly
-              placeholder="選擇 PNG / GIF / WebP..."
+              placeholder="選擇 PNG（支援透明背景）/ GIF / WebP..."
               size="small"
               style={{ flex: 1 }}
             />
@@ -102,7 +102,7 @@ const FloatingImagePanel: React.FC = () => {
           </Text>
           <Slider
             min={2}
-            max={50}
+            max={100}
             value={Math.round(speed * 10)}
             onChange={(v) => setSpeed(v / 10)}
           />

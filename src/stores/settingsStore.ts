@@ -7,7 +7,7 @@ const DEFAULTS: Settings = {
   theme: 'dark',
   language: 'zh-TW',
   asrApiUrl: 'http://localhost:8000/v1',
-  asrModel: 'Qwen/Qwen3-ASR-1.7B',
+  asrModel: 'asr-1.7b',
   ffmpegPath: '',
   ytdlpPath: '',
 };

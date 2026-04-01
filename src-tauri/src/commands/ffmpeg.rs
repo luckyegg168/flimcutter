@@ -1024,6 +1024,39 @@ pub async fn add_border(
     Ok(output)
 }
 
+// ─── Feature: Image Border (frame overlay) ───────────────────────────────────
+
+#[tauri::command]
+pub async fn image_border(
+    app: AppHandle,
+    input: String,
+    output: String,
+    frame: String,
+    task_id: String,
+) -> Result<String, String> {
+    let meta = get_metadata_internal(&app, &input).await?;
+    let w = meta.width;
+    let h = meta.height;
+    // Scale frame PNG to video dimensions, then overlay on video.
+    // The frame PNG should have a transparent center so the video shows through.
+    let filter = format!(
+        "[1:v]scale={w}:{h},format=rgba[frame];[0:v][frame]overlay=0:0[out]"
+    );
+    let args = vec![
+        "-y".to_string(),
+        "-i".to_string(), input,
+        "-i".to_string(), frame,
+        "-filter_complex".to_string(), filter,
+        "-map".to_string(), "[out]".to_string(),
+        "-map".to_string(), "0:a?".to_string(),
+        "-c:v".to_string(), "libx264".to_string(),
+        "-c:a".to_string(), "copy".to_string(),
+        output.clone(),
+    ];
+    run_ffmpeg_with_progress(&app, args, &task_id, meta.duration).await?;
+    Ok(output)
+}
+
 // ─── Feature: Floating Image ─────────────────────────────────────────────────
 
 #[tauri::command]

@@ -6,10 +6,11 @@ export async function transcribeVideo(
   opts: { apiUrl: string; model: string; language?: string; task?: string }
 ): Promise<AsrResult> {
   return invoke<AsrResult>('transcribe_audio', {
-    inputPath,
+    input: inputPath,
     apiUrl: opts.apiUrl,
     model: opts.model,
     language: opts.language ?? null,
+    task: opts.task ?? null,
   });
 }
 

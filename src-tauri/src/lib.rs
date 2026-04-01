@@ -31,6 +31,7 @@ pub fn run() {
             ffmpeg::crop_video,
             ffmpeg::preview_frame_effect,
             ffmpeg::add_border,
+            ffmpeg::image_border,
             ffmpeg::floating_image,
             ffmpeg::merge_with_transitions,
             // download commands

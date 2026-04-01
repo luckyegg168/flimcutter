@@ -308,6 +308,19 @@ export async function addBorder(
   }, onProgress);
 }
 
+export async function addImageBorder(
+  inputPath: string,
+  outputPath: string,
+  opts: { frame: string },
+  onProgress?: ProgressCallback
+): Promise<string> {
+  return runFfmpegOperation('image_border', {
+    input: inputPath,
+    output: outputPath,
+    frame: opts.frame,
+  }, onProgress);
+}
+
 export async function floatingImage(
   inputPath: string,
   outputPath: string,
