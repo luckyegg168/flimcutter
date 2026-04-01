@@ -71,12 +71,8 @@ async fn run_ffprobe(
         "-show_format",
         input,
     ];
-    // We use ffmpeg with ffprobe-like flags; shipping separate ffprobe is optional.
-    // If ffprobe sidecar is available use that, otherwise parse ffmpeg stderr output.
-    // For simplicity, use ffprobe via the ffmpeg sidecar path replaced with ffprobe.
-    // However, we only have ffmpeg sidecar. Let's extract info via ffmpeg -i.
     let _ = args; // suppress warning
-    
+
     let (mut rx, _child) = app
         .shell()
         .sidecar("ffmpeg")
@@ -98,16 +94,13 @@ async fn run_ffprobe(
             _ => {}
         }
     }
-    
-    // Parse JSON output from ffprobe-like call — but we're using ffmpeg sidecar which won't support -show_streams.
-    // We'll use -i and parse stderr instead.
+
     let mut info = HashMap::new();
     info.insert("raw".to_string(), output);
     Ok(info)
 }
 
 async fn get_metadata_internal(app: &AppHandle, input: &str) -> Result<VideoMetadata, String> {
-    // Use ffmpeg -i to get video info from stderr
     let (mut rx, _child) = app
         .shell()
         .sidecar("ffmpeg")
@@ -133,15 +126,14 @@ async fn get_metadata_internal(app: &AppHandle, input: &str) -> Result<VideoMeta
 
 fn parse_ffmpeg_info(stderr: &str, path: &str) -> Result<VideoMetadata, String> {
     use std::path::Path;
-    
+
     let filename = Path::new(path)
         .file_name()
         .map(|n| n.to_string_lossy().to_string())
         .unwrap_or_default();
 
     let file_size = std::fs::metadata(path).map(|m| m.len()).unwrap_or(0);
-    
-    // Duration
+
     let mut duration = 0.0f64;
     if let Some(caps) = regex::Regex::new(r"Duration: (\d{2}:\d{2}:\d{2}\.\d+)")
         .ok()
@@ -150,7 +142,6 @@ fn parse_ffmpeg_info(stderr: &str, path: &str) -> Result<VideoMetadata, String> 
         duration = parse_duration_secs(&caps[1]);
     }
 
-    // Video stream info: Video: codec, wxh, fps
     let mut width = 0u32;
     let mut height = 0u32;
     let mut fps = 0.0f64;
@@ -186,7 +177,6 @@ fn parse_ffmpeg_info(stderr: &str, path: &str) -> Result<VideoMetadata, String> 
         bitrate = caps[1].parse::<u64>().unwrap_or(0) * 1000;
     }
 
-    // Audio codec
     let mut audio_codec = String::new();
     if let Some(caps) = regex::Regex::new(r"Stream #\S+ Audio: (\w+)")
         .ok()
@@ -195,7 +185,6 @@ fn parse_ffmpeg_info(stderr: &str, path: &str) -> Result<VideoMetadata, String> 
         audio_codec = caps[1].to_string();
     }
 
-    // Format
     let format = std::path::Path::new(path)
         .extension()
         .map(|e| e.to_string_lossy().to_lowercase())
@@ -249,7 +238,6 @@ async fn run_ffmpeg_with_progress(
         match event {
             CommandEvent::Stderr(line) => {
                 let line_str = String::from_utf8_lossy(&line);
-                // Parse time= from ffmpeg progress output
                 if let Some(caps) = regex::Regex::new(r"time=(\d{2}:\d{2}:\d{2}\.\d+)")
                     .ok()
                     .and_then(|re| re.captures(&line_str))
@@ -346,7 +334,7 @@ pub async fn split_video(
     task_id: String,
 ) -> Result<Vec<String>, String> {
     use std::path::Path;
-    
+
     let meta = get_metadata_internal(&app, &input).await?;
     let stem = Path::new(&input)
         .file_stem()
@@ -359,7 +347,7 @@ pub async fn split_video(
 
     let mut points = split_points.clone();
     points.sort_by(|a, b| a.partial_cmp(b).unwrap());
-    
+
     let mut segments: Vec<(f64, f64)> = Vec::new();
     let mut prev = 0.0f64;
     for &p in &points {
@@ -397,8 +385,7 @@ pub async fn merge_videos(
     task_id: String,
 ) -> Result<String, String> {
     use std::io::Write;
-    
-    // Create concat list file
+
     let tmp = tempfile::NamedTempFile::new().map_err(|e| e.to_string())?;
     {
         let mut f = tmp.as_file();
@@ -407,7 +394,7 @@ pub async fn merge_videos(
             writeln!(f, "file '{}'", escaped).map_err(|e| e.to_string())?;
         }
     }
-    
+
     let total_duration: f64 = {
         let mut total = 0.0;
         for inp in &inputs {
@@ -607,10 +594,8 @@ pub async fn make_gif(
     task_id: String,
 ) -> Result<String, String> {
     let duration = end - start;
-    // Two-pass GIF: palette gen then encode
     let palette_file = format!("{}.palette.png", output);
-    
-    // Pass 1: generate palette
+
     let palettegen_args = vec![
         "-y".to_string(),
         "-ss".to_string(), secs_to_ts(start),
@@ -632,7 +617,6 @@ pub async fn make_gif(
         if let CommandEvent::Terminated(_) = event { break; }
     }
 
-    // Pass 2: encode with palette
     let encode_args = vec![
         "-y".to_string(),
         "-ss".to_string(), secs_to_ts(start),
@@ -644,7 +628,6 @@ pub async fn make_gif(
     ];
     run_ffmpeg_with_progress(&app, encode_args, &task_id, duration).await?;
 
-    // Clean up palette file
     let _ = std::fs::remove_file(&palette_file);
 
     Ok(output)
@@ -661,7 +644,6 @@ pub async fn adjust_speed(
     let meta = get_metadata_internal(&app, &input).await?;
     let new_duration = meta.duration / speed;
 
-    // atempo supports 0.5 to 2.0; for other values chain multiple atempo filters
     let audio_filter = build_atempo_chain(speed);
     let args = vec![
         "-y".to_string(),
@@ -679,15 +661,11 @@ pub async fn adjust_speed(
 }
 
 fn build_atempo_chain(speed: f64) -> String {
-    // atempo filter must be in range [0.5, 100]; for large changes chain
-    // We clamp to [0.25, 4.0] as per UI options
     if speed >= 0.5 && speed <= 2.0 {
         format!("atempo={:.4}", speed)
     } else if speed < 0.5 {
-        // Two 0.5 filters = 0.25x
         format!("atempo=0.5,atempo={:.4}", speed / 0.5)
     } else {
-        // speed > 2.0: chain
         let mut chain = String::new();
         let mut remaining = speed;
         let mut first = true;
@@ -715,9 +693,9 @@ pub async fn rotate_video(
     task_id: String,
 ) -> Result<String, String> {
     let meta = get_metadata_internal(&app, &input).await?;
-    
+
     let mut vf_parts: Vec<String> = Vec::new();
-    
+
     match rotation {
         90 => vf_parts.push("transpose=1".to_string()),
         180 => vf_parts.push("transpose=2,transpose=2".to_string()),
@@ -829,7 +807,6 @@ pub async fn watermark_video(
 ) -> Result<String, String> {
     let meta = get_metadata_internal(&app, &input).await?;
 
-    // Escape text for drawtext (backslash, colon, single-quote)
     let escaped = text
         .replace('\\', "\\\\")
         .replace(':', "\\:")
@@ -848,18 +825,16 @@ pub async fn watermark_video(
 
     let alpha = opacity.clamp(0.0, 1.0);
 
-    // Resolve font file: use provided path or fall back to common Windows CJK fonts
     let font_file = font_path
         .filter(|p| !p.is_empty() && std::path::Path::new(p).exists())
         .or_else(|| {
-            // Common Windows fonts that support CJK characters
             let candidates = [
-                "C:/Windows/Fonts/msjh.ttc",     // 微軟正黑體
+                "C:/Windows/Fonts/msjh.ttc",
                 "C:/Windows/Fonts/msjhbd.ttc",
-                "C:/Windows/Fonts/mingliu.ttc",   // 細明體
-                "C:/Windows/Fonts/kaiu.ttf",      // 標楷體
-                "C:/Windows/Fonts/simsun.ttc",    // 宋體 (Simplified)
-                "C:/Windows/Fonts/msyh.ttc",      // 微軟雅黑 (Simplified)
+                "C:/Windows/Fonts/mingliu.ttc",
+                "C:/Windows/Fonts/kaiu.ttf",
+                "C:/Windows/Fonts/simsun.ttc",
+                "C:/Windows/Fonts/msyh.ttc",
             ];
             candidates.iter()
                 .find(|p| std::path::Path::new(p).exists())
@@ -895,7 +870,7 @@ pub async fn image_watermark(
     image: String,
     position: String,
     opacity: f64,
-    scale: u32, // percentage 10–200
+    scale: u32,
     task_id: String,
 ) -> Result<String, String> {
     let meta = get_metadata_internal(&app, &input).await?;
@@ -907,7 +882,7 @@ pub async fn image_watermark(
         "topright"    => "W-w-20:20",
         "bottomleft"  => "20:H-h-20",
         "bottomright" => "W-w-20:H-h-20",
-        _             => "(W-w)/2:(H-h)/2", // center
+        _             => "(W-w)/2:(H-h)/2",
     };
 
     let filter = format!(
@@ -950,5 +925,235 @@ pub async fn crop_video(
         output.clone(),
     ];
     run_ffmpeg_with_progress(&app, args, &task_id, meta.duration).await?;
+    Ok(output)
+}
+
+// ─── Feature: Effect Preview ─────────────────────────────────────────────────
+
+#[tauri::command]
+pub async fn preview_frame_effect(
+    app: AppHandle,
+    input: String,
+    timestamp: f64,
+    vf_filter: String,
+    task_id: String,
+) -> Result<String, String> {
+    let _ = task_id;
+
+    let tmp = tempfile::Builder::new()
+        .suffix(".png")
+        .tempfile()
+        .map_err(|e| e.to_string())?;
+    let tmp_path = tmp.path().to_string_lossy().to_string();
+
+    let mut args = vec![
+        "-y".to_string(),
+        "-ss".to_string(), secs_to_ts(timestamp),
+        "-i".to_string(), input,
+    ];
+
+    if !vf_filter.is_empty() {
+        args.extend_from_slice(&["-vf".to_string(), vf_filter]);
+    }
+
+    args.extend_from_slice(&[
+        "-vframes".to_string(), "1".to_string(),
+        "-q:v".to_string(), "2".to_string(),
+        tmp_path.clone(),
+    ]);
+
+    let (mut rx, _child) = app
+        .shell()
+        .sidecar("ffmpeg")
+        .map_err(|e| e.to_string())?
+        .args(&args)
+        .spawn()
+        .map_err(|e| e.to_string())?;
+
+    let mut last_err = String::new();
+    while let Some(event) = rx.recv().await {
+        match event {
+            CommandEvent::Stderr(line) => {
+                last_err = String::from_utf8_lossy(&line).to_string();
+            }
+            CommandEvent::Terminated(status) => {
+                if status.code.unwrap_or(-1) != 0 {
+                    return Err(format!("預覽失敗: {}", last_err));
+                }
+                break;
+            }
+            _ => {}
+        }
+    }
+
+    let png_bytes = std::fs::read(&tmp_path)
+        .map_err(|e| format!("讀取預覽圖片失敗: {}", e))?;
+
+    use base64::Engine;
+    let b64 = base64::engine::general_purpose::STANDARD.encode(&png_bytes);
+    Ok(format!("data:image/png;base64,{}", b64))
+}
+
+// ─── Feature: Add Border ─────────────────────────────────────────────────────
+
+#[tauri::command]
+pub async fn add_border(
+    app: AppHandle,
+    input: String,
+    output: String,
+    top: u32,
+    bottom: u32,
+    left: u32,
+    right: u32,
+    color: String,
+    task_id: String,
+) -> Result<String, String> {
+    let meta = get_metadata_internal(&app, &input).await?;
+    let vf = format!(
+        "pad=iw+{}:ih+{}:{}:{}:0x{}",
+        left + right, top + bottom, left, top, color
+    );
+    let args = vec![
+        "-y".to_string(),
+        "-i".to_string(), input,
+        "-vf".to_string(), vf,
+        "-c:a".to_string(), "copy".to_string(),
+        output.clone(),
+    ];
+    run_ffmpeg_with_progress(&app, args, &task_id, meta.duration).await?;
+    Ok(output)
+}
+
+// ─── Feature: Floating Image ─────────────────────────────────────────────────
+
+#[tauri::command]
+pub async fn floating_image(
+    app: AppHandle,
+    input: String,
+    output: String,
+    image: String,
+    motion: String,
+    speed: f64,
+    scale: u32,
+    opacity: f64,
+    radius: u32,
+    task_id: String,
+) -> Result<String, String> {
+    let meta = get_metadata_internal(&app, &input).await?;
+    let alpha = opacity.clamp(0.0, 1.0);
+    let scale_factor = (scale as f64 / 100.0).clamp(0.05, 1.0);
+    let spd = speed.max(0.1);
+
+    let (x_expr, y_expr) = match motion.as_str() {
+        "bounce_h" => (
+            format!("if(lt(mod(t*{spd:.2},2*(W-w)),W-w),mod(t*{spd:.2},W-w),2*(W-w)-mod(t*{spd:.2},W-w))"),
+            "(H-h)/2".to_string(),
+        ),
+        "bounce_v" => (
+            "(W-w)/2".to_string(),
+            format!("if(lt(mod(t*{spd:.2},2*(H-h)),H-h),mod(t*{spd:.2},H-h),2*(H-h)-mod(t*{spd:.2},H-h))"),
+        ),
+        "diagonal" => (
+            format!("if(lt(mod(t*{spd:.2},2*(W-w)),W-w),mod(t*{spd:.2},W-w),2*(W-w)-mod(t*{spd:.2},W-w))"),
+            format!("if(lt(mod(t*{spd:.2},2*(H-h)),H-h),mod(t*{spd:.2},H-h),2*(H-h)-mod(t*{spd:.2},H-h))"),
+        ),
+        _ => {
+            let r = radius as f64;
+            (
+                format!("(W-w)/2+{r:.0}*cos(t*{spd:.2})"),
+                format!("(H-h)/2+{r:.0}*sin(t*{spd:.2})"),
+            )
+        }
+    };
+
+    let filter = format!(
+        "[1:v]scale=iw*{sf:.3}:ih*{sf:.3},format=rgba,colorchannelmixer=aa={alpha:.2}[logo];[0:v][logo]overlay=x='{x}':y='{y}'[out]",
+        sf = scale_factor,
+        alpha = alpha,
+        x = x_expr,
+        y = y_expr,
+    );
+
+    let args = vec![
+        "-y".to_string(),
+        "-i".to_string(), input,
+        "-i".to_string(), image,
+        "-filter_complex".to_string(), filter,
+        "-map".to_string(), "[out]".to_string(),
+        "-map".to_string(), "0:a?".to_string(),
+        "-c:v".to_string(), "libx264".to_string(),
+        "-c:a".to_string(), "copy".to_string(),
+        output.clone(),
+    ];
+    run_ffmpeg_with_progress(&app, args, &task_id, meta.duration).await?;
+    Ok(output)
+}
+
+// ─── Feature: Merge with Transitions ─────────────────────────────────────────
+
+#[tauri::command]
+pub async fn merge_with_transitions(
+    app: AppHandle,
+    inputs: Vec<String>,
+    output: String,
+    transition: String,
+    duration: f64,
+    task_id: String,
+) -> Result<String, String> {
+    if inputs.len() < 2 {
+        return Err("至少需要兩個影片".to_string());
+    }
+
+    let mut clip_durations: Vec<f64> = Vec::new();
+    for inp in &inputs {
+        let meta = get_metadata_internal(&app, inp).await?;
+        clip_durations.push(meta.duration);
+    }
+
+    let total_duration: f64 = clip_durations.iter().sum();
+    let n = inputs.len();
+
+    let mut filter_parts: Vec<String> = Vec::new();
+    let mut offset_acc = 0.0f64;
+    let mut last_v = String::new();
+    let mut last_a = String::new();
+
+    for i in 0..(n - 1) {
+        let prev_v = if i == 0 { "0:v".to_string() } else { format!("fv{}", i - 1) };
+        let prev_a = if i == 0 { "0:a".to_string() } else { format!("fa{}", i - 1) };
+
+        offset_acc += clip_durations[i] - duration;
+        if offset_acc < 0.0 { offset_acc = 0.0; }
+
+        let out_v = format!("fv{}", i);
+        let out_a = format!("fa{}", i);
+
+        filter_parts.push(format!(
+            "[{}][{}:v]xfade=transition={}:duration={:.3}:offset={:.3}[{}]",
+            prev_v, i + 1, transition, duration, offset_acc, out_v
+        ));
+        filter_parts.push(format!(
+            "[{}][{}:a]acrossfade=d={:.3}[{}]",
+            prev_a, i + 1, duration, out_a
+        ));
+
+        last_v = out_v;
+        last_a = out_a;
+    }
+
+    let mut args = vec!["-y".to_string()];
+    for inp in &inputs {
+        args.extend_from_slice(&["-i".to_string(), inp.clone()]);
+    }
+    args.extend_from_slice(&[
+        "-filter_complex".to_string(), filter_parts.join(";"),
+        "-map".to_string(), format!("[{}]", last_v),
+        "-map".to_string(), format!("[{}]", last_a),
+        "-c:v".to_string(), "libx264".to_string(),
+        "-c:a".to_string(), "aac".to_string(),
+        output.clone(),
+    ]);
+
+    run_ffmpeg_with_progress(&app, args, &task_id, total_duration).await?;
     Ok(output)
 }

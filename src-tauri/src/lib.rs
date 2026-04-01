@@ -29,6 +29,10 @@ pub fn run() {
             ffmpeg::watermark_video,
             ffmpeg::image_watermark,
             ffmpeg::crop_video,
+            ffmpeg::preview_frame_effect,
+            ffmpeg::add_border,
+            ffmpeg::floating_image,
+            ffmpeg::merge_with_transitions,
             // download commands
             download::get_video_info,
             download::start_download,

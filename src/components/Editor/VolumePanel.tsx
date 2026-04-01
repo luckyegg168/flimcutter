@@ -13,6 +13,7 @@ const VolumePanel: React.FC = () => {
   const [volume, setVolume] = useState(1.0);
   const [mute, setMute] = useState(false);
   const [loading, setLoading] = useState(false);
+  const [progress, setProgress] = useState<string | null>(null);
 
   const handleApply = async () => {
     if (!currentFile) return;
@@ -22,13 +23,15 @@ const VolumePanel: React.FC = () => {
     });
     if (!outputPath) return;
     setLoading(true);
+    setProgress(null);
     try {
-      await adjustVolume(currentFile.path, outputPath, mute ? 0 : volume);
+      await adjustVolume(currentFile.path, outputPath, mute ? 0 : volume, (p) => setProgress(`${p.toFixed(0)}%`));
       message.success('音量調整完成！');
     } catch (err) {
       message.error('處理失敗: ' + String(err));
     } finally {
       setLoading(false);
+      setProgress(null);
     }
   };
 
@@ -53,6 +56,10 @@ const VolumePanel: React.FC = () => {
             </div>
           </div>
         )}
+        {progress && (
+          <Text style={{ color: '#aaa', fontSize: 11 }}>處理中 {progress}</Text>
+        )}
+
         <Button type="primary" block icon={<SoundOutlined />} loading={loading} onClick={handleApply} disabled={!currentFile}>
           套用音量
         </Button>

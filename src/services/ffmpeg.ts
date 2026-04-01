@@ -278,6 +278,75 @@ export async function imageWatermark(
   }, onProgress);
 }
 
+export async function previewFrameEffect(
+  inputPath: string,
+  timestamp: number,
+  vfFilter: string,
+): Promise<string> {
+  return invoke<string>('preview_frame_effect', {
+    input: inputPath,
+    timestamp,
+    vfFilter,
+    taskId: `preview_${Date.now()}`,
+  });
+}
+
+export async function addBorder(
+  inputPath: string,
+  outputPath: string,
+  opts: { top: number; bottom: number; left: number; right: number; color: string },
+  onProgress?: ProgressCallback
+): Promise<string> {
+  return runFfmpegOperation('add_border', {
+    input: inputPath,
+    output: outputPath,
+    top: opts.top,
+    bottom: opts.bottom,
+    left: opts.left,
+    right: opts.right,
+    color: opts.color.replace('#', ''),
+  }, onProgress);
+}
+
+export async function floatingImage(
+  inputPath: string,
+  outputPath: string,
+  opts: {
+    image: string;
+    motion: 'bounce_h' | 'bounce_v' | 'diagonal' | 'circular';
+    speed: number;
+    scale: number;
+    opacity: number;
+    radius: number;
+  },
+  onProgress?: ProgressCallback
+): Promise<string> {
+  return runFfmpegOperation('floating_image', {
+    input: inputPath,
+    output: outputPath,
+    image: opts.image,
+    motion: opts.motion,
+    speed: opts.speed,
+    scale: opts.scale,
+    opacity: opts.opacity,
+    radius: opts.radius,
+  }, onProgress);
+}
+
+export async function mergeWithTransitions(
+  inputPaths: string[],
+  outputPath: string,
+  opts: { transition: string; duration: number },
+  onProgress?: ProgressCallback
+): Promise<string> {
+  return runFfmpegOperation('merge_with_transitions', {
+    inputs: inputPaths,
+    output: outputPath,
+    transition: opts.transition,
+    duration: opts.duration,
+  }, onProgress);
+}
+
 export async function cropVideo(
   inputPath: string,
   outputPath: string,

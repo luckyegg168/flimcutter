@@ -14,6 +14,7 @@ const SpeedPanel: React.FC = () => {
   const currentFile = useVideoStore((s) => s.currentFile);
   const [speed, setSpeed] = useState(1);
   const [loading, setLoading] = useState(false);
+  const [progress, setProgress] = useState<string | null>(null);
 
   const handleApply = async () => {
     if (!currentFile || speed === 1) return;
@@ -23,13 +24,15 @@ const SpeedPanel: React.FC = () => {
     });
     if (!outputPath) return;
     setLoading(true);
+    setProgress(null);
     try {
-      await adjustSpeed(currentFile.path, outputPath, speed);
+      await adjustSpeed(currentFile.path, outputPath, speed, (p) => setProgress(`${p.toFixed(0)}%`));
       message.success('速度調整完成！');
     } catch (err) {
       message.error('處理失敗: ' + String(err));
     } finally {
       setLoading(false);
+      setProgress(null);
     }
   };
 
@@ -48,6 +51,10 @@ const SpeedPanel: React.FC = () => {
           <Text style={{ color: '#888', fontSize: 12 }}>自訂倍率: {speed}x</Text>
           <Slider min={0.25} max={4} step={0.05} value={speed} onChange={setSpeed} />
         </div>
+        {progress && (
+          <Text style={{ color: '#aaa', fontSize: 11 }}>處理中 {progress}</Text>
+        )}
+
         <Button type="primary" block icon={<FieldTimeOutlined />} loading={loading} onClick={handleApply} disabled={!currentFile || speed === 1}>
           套用 ({speed}x)
         </Button>

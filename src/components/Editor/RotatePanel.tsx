@@ -1,9 +1,10 @@
 import React, { useState } from 'react';
-import { Button, Radio, App, Typography, Space } from 'antd';
+import { Button, Radio, App, Typography, Space, Divider } from 'antd';
 import { RotateRightOutlined } from '@ant-design/icons';
 import { save } from '@tauri-apps/plugin-dialog';
 import { useVideoStore } from '../../stores/videoStore';
 import { rotateVideo } from '../../services/ffmpeg';
+import EffectPreview from './EffectPreview';
 
 const { Text } = Typography;
 
@@ -13,6 +14,17 @@ const RotatePanel: React.FC = () => {
   const [rotation, setRotation] = useState<90 | 180 | 270>(90);
   const [flip, setFlip] = useState<'none' | 'hflip' | 'vflip'>('none');
   const [loading, setLoading] = useState(false);
+  const [progress, setProgress] = useState<string | null>(null);
+
+  const buildVfFilter = (): string | null => {
+    const parts: string[] = [];
+    if (rotation === 90)  parts.push('transpose=1');
+    else if (rotation === 180) parts.push('transpose=2,transpose=2');
+    else if (rotation === 270) parts.push('transpose=2');
+    if (flip === 'hflip') parts.push('hflip');
+    else if (flip === 'vflip') parts.push('vflip');
+    return parts.length > 0 ? parts.join(',') : null;
+  };
 
   const handleApply = async () => {
     if (!currentFile) return;
@@ -22,13 +34,15 @@ const RotatePanel: React.FC = () => {
     });
     if (!outputPath) return;
     setLoading(true);
+    setProgress(null);
     try {
-      await rotateVideo(currentFile.path, outputPath, rotation, flip !== 'none' ? flip : undefined);
+      await rotateVideo(currentFile.path, outputPath, rotation, flip !== 'none' ? flip : undefined, (p) => setProgress(`${p.toFixed(0)}%`));
       message.success('旋轉完成！');
     } catch (err) {
       message.error('處理失敗: ' + String(err));
     } finally {
       setLoading(false);
+      setProgress(null);
     }
   };
 
@@ -52,8 +66,15 @@ const RotatePanel: React.FC = () => {
             <Radio.Button value="vflip">垂直翻轉</Radio.Button>
           </Radio.Group>
         </div>
+        <Divider style={{ margin: '4px 0', borderColor: '#222' }} />
+        <EffectPreview buildVfFilter={buildVfFilter} />
+
+        {progress && (
+          <Text style={{ color: '#aaa', fontSize: 11 }}>處理中 {progress}</Text>
+        )}
+
         <Button type="primary" block icon={<RotateRightOutlined />} loading={loading} onClick={handleApply} disabled={!currentFile}>
-          套用
+          套用旋轉
         </Button>
       </Space>
     </div>

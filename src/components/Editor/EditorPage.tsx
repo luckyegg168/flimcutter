@@ -23,6 +23,8 @@ import {
   FunctionOutlined,
   FontSizeOutlined,
   FullscreenExitOutlined,
+  BorderOutlined,
+  PictureOutlined,
 } from '@ant-design/icons';
 import { useTranslation } from 'react-i18next';
 import { open } from '@tauri-apps/plugin-dialog';
@@ -44,6 +46,8 @@ import SceneDetectPanel from './SceneDetectPanel';
 import AsrPanel from '../Settings/AsrPanel';
 import WatermarkPanel from './WatermarkPanel';
 import CropPanel from './CropPanel';
+import BorderPanel from './BorderPanel';
+import FloatingImagePanel from './FloatingImagePanel';
 import { getVideoInfo } from '../../services/ffmpeg';
 
 const { Text } = Typography;
@@ -139,7 +143,9 @@ const EditorPage: React.FC = () => {
     { key: 'volume',   icon: <SoundOutlined />,         label: '音量' },
     { key: 'scene',    icon: <BuildOutlined />,         label: '場景' },
     { key: 'watermark',icon: <FontSizeOutlined />,      label: '浮水印' },
-    { key: 'crop',     icon: <FullscreenExitOutlined />,          label: '裁剪' },
+    { key: 'crop',     icon: <FullscreenExitOutlined />, label: '裁剪' },
+    { key: 'border',   icon: <BorderOutlined />,        label: '邊框' },
+    { key: 'floating', icon: <PictureOutlined />,       label: '浮動圖' },
     { key: 'asr',      icon: <FunctionOutlined />,      label: 'ASR' },
   ];
 
@@ -279,6 +285,8 @@ const EditorPage: React.FC = () => {
           {activeTab === 'scene' && <SceneDetectPanel />}
           {activeTab === 'watermark' && <WatermarkPanel />}
           {activeTab === 'crop' && <CropPanel />}
+          {activeTab === 'border' && <BorderPanel />}
+          {activeTab === 'floating' && <FloatingImagePanel />}
           {activeTab === 'asr' && <AsrPanel />}
         </div>
       </div>

@@ -1,9 +1,10 @@
 import React, { useState } from 'react';
-import { Button, InputNumber, App, Typography, Space, Tag, Row, Col } from 'antd';
+import { Button, InputNumber, App, Typography, Space, Tag, Row, Col, Divider } from 'antd';
 import { FullscreenExitOutlined } from '@ant-design/icons';
 import { save } from '@tauri-apps/plugin-dialog';
 import { useVideoStore } from '../../stores/videoStore';
 import { cropVideo } from '../../services/ffmpeg';
+import EffectPreview from './EffectPreview';
 
 const { Text } = Typography;
 
@@ -36,6 +37,11 @@ const CropPanel: React.FC = () => {
     cropX >= 0 && cropY >= 0 &&
     cropX + cropW <= srcW &&
     cropY + cropH <= srcH;
+
+  const buildVfFilter = (): string | null => {
+    if (!isValid) return null;
+    return `crop=${cropW}:${cropH}:${cropX}:${cropY}`;
+  };
 
   const handleApply = async () => {
     if (!currentFile || !isValid) return;
@@ -158,6 +164,9 @@ const CropPanel: React.FC = () => {
             裁剪範圍超出原始尺寸，請調整
           </Text>
         )}
+
+        <Divider style={{ margin: '4px 0', borderColor: '#222' }} />
+        <EffectPreview buildVfFilter={buildVfFilter} />
 
         {progress && (
           <Text style={{ color: '#aaa', fontSize: 11 }}>處理中 {progress}</Text>

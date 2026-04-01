@@ -867,6 +867,7 @@ dependencies = [
 name = "flimcutter"
 version = "0.1.0"
 dependencies = [
+ "base64 0.22.1",
  "env_logger",
  "log",
  "regex",

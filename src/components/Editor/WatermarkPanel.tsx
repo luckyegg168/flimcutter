@@ -1,9 +1,10 @@
 import React, { useState } from 'react';
-import { Button, Input, Select, Slider, App, Typography, Space, ColorPicker, Row, Col, Segmented, InputNumber } from 'antd';
+import { Button, Input, Select, Slider, App, Typography, Space, ColorPicker, Row, Col, Segmented, InputNumber, Divider } from 'antd';
 import { FontSizeOutlined, PictureOutlined, FolderOpenOutlined } from '@ant-design/icons';
 import { open, save } from '@tauri-apps/plugin-dialog';
 import { useVideoStore } from '../../stores/videoStore';
 import { watermarkVideo, imageWatermark } from '../../services/ffmpeg';
+import EffectPreview from './EffectPreview';
 
 const { Text } = Typography;
 
@@ -70,6 +71,23 @@ const WatermarkPanel: React.FC = () => {
     if (selected && typeof selected === 'string') {
       setImagePath(selected);
     }
+  };
+
+  const buildVfFilter = (): string | null => {
+    if (mode === 'image') return null;
+    if (!text.trim()) return null;
+    const escaped = text.replace(/\\/g, '\\\\').replace(/:/g, '\\:').replace(/'/g, "\\'");
+    const fontPath = selectedFont === '__custom__' ? customFontPath : selectedFont;
+    const xExpr = ['topleft', 'bottomleft'].includes(position) ? '20'
+      : ['topright', 'bottomright'].includes(position) ? '(w-text_w-20)'
+      : '(w-text_w)/2';
+    const yExpr = ['topleft', 'topright'].includes(position) ? '20'
+      : ['bottomleft', 'bottomright'].includes(position) ? '(h-text_h-20)'
+      : '(h-text_h)/2';
+    const fontClause = fontPath
+      ? `fontfile='${fontPath.replace(/\\/g, '/').replace(/:/g, '\\:')}': `
+      : '';
+    return `drawtext=${fontClause}text='${escaped}':fontsize=${fontSize}:fontcolor=${color}@${opacity.toFixed(2)}:x=${xExpr}:y=${yExpr}`;
   };
 
   const handleApply = async () => {
@@ -209,6 +227,9 @@ const WatermarkPanel: React.FC = () => {
             </Row>
           </>
         )}
+
+        <Divider style={{ margin: '4px 0', borderColor: '#222' }} />
+        <EffectPreview buildVfFilter={buildVfFilter} />
 
         {progress && (
           <Text style={{ color: '#aaa', fontSize: 11 }}>處理中 {progress}</Text>
