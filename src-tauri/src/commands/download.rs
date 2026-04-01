@@ -110,7 +110,8 @@ pub async fn start_download(
 ) -> Result<String, String> {
     // Register task in cancel map
     {
-        let mut map = get_cancel_map().lock().map_err(|e| e.to_string())?;
+        let cancel_map = get_cancel_map();
+        let mut map = cancel_map.lock().map_err(|e| e.to_string())?;
         map.insert(task_id.clone(), false);
     }
 
@@ -146,7 +147,7 @@ pub async fn start_download(
     ).map_err(|e| e.to_string())?;
 
     let re_dest = regex::Regex::new(r"\[download\] Destination: (.+)").map_err(|e| e.to_string())?;
-    let re_merge = regex::Regex::new(r"\[Merger\] Merging formats into \"(.+)\"").map_err(|e| e.to_string())?;
+    let re_merge = regex::Regex::new(r#"\[Merger\] Merging formats into "(.+)""#).map_err(|e| e.to_string())?;
     let re_already = regex::Regex::new(r"\[download\] (.+) has already been downloaded").map_err(|e| e.to_string())?;
 
     let cancel_map = get_cancel_map();
@@ -244,7 +245,8 @@ pub async fn start_download(
 
 #[tauri::command]
 pub async fn cancel_download(task_id: String) -> Result<(), String> {
-    let mut map = get_cancel_map().lock().map_err(|e| e.to_string())?;
+    let cancel_map = get_cancel_map();
+    let mut map = cancel_map.lock().map_err(|e| e.to_string())?;
     map.insert(task_id, true);
     Ok(())
 }

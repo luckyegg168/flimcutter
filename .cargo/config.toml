@@ -1,0 +1,7 @@
+[env]
+# VS2026 BuildTools (x86) has complete MSVC headers+libs; Community lacks include dir
+INCLUDE = { value = 'C:\Program Files (x86)\Microsoft Visual Studio\18\BuildTools\VC\Tools\MSVC\14.50.35717\include;C:\Program Files (x86)\Windows Kits\10\Include\10.0.26100.0\ucrt;C:\Program Files (x86)\Windows Kits\10\Include\10.0.26100.0\um;C:\Program Files (x86)\Windows Kits\10\Include\10.0.26100.0\shared', force = true }
+LIB = { value = 'C:\Program Files (x86)\Microsoft Visual Studio\18\BuildTools\VC\Tools\MSVC\14.50.35717\lib\x64;C:\Program Files (x86)\Windows Kits\10\Lib\10.0.26100.0\ucrt\x64;C:\Program Files (x86)\Windows Kits\10\Lib\10.0.26100.0\um\x64', force = true }
+LIBPATH = { value = 'C:\Program Files (x86)\Microsoft Visual Studio\18\BuildTools\VC\Tools\MSVC\14.50.35717\lib\x64', force = true }
+VCINSTALLDIR = { value = 'C:\Program Files (x86)\Microsoft Visual Studio\18\BuildTools\VC\', force = true }
+VSCMD_ARG_TGT_ARCH = { value = 'amd64', force = true }
